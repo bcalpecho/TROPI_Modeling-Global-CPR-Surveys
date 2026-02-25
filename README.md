@@ -10,7 +10,7 @@ For the chlorophyll-a data, the netcdf files of OC-CCI can be downloaded through
 
 * ```1_generate_traits.R``` assign trophic groups to provided zooplankton taxon list based on trait tables.
 * ```2_extract_chla.R``` aggregates, extracts, and fill-up gaps of OC-CCI chlorophyll-a values.
-* ```3_generate_completeDF.R``` finalizes the data frame composed of relative abundances, trait, and chlorophyll data.
+* ```3_generate_completeDF.R``` finalizes the complete data frame comprised of zooplankton (relative abundance and assigned traits) and chlorophyll data.
 * ```4_model_globalCPR.R``` fit the model and generates the model predictions.
 * ```5_predict_globalCPR.R``` generate model predictions given the ensemble data.
 * ```6_assess_models.R``` assess the quality of fit of GLMs and produce the supplementary figures for model assessment.
