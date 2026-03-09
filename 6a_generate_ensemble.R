@@ -18,24 +18,30 @@ library(hotrstuff)
 # define variable
 var <- "chlos"
 
+#List of ESMs used for generating an ensemble
+## ACCESS-ESM1-5
+## CanESM5
+## CanESM5-1
+## IPSL-CM6A-LR
+## CESM2-WACCM
+## CMCC-ESM2
+## MPI-ESM1-2-LR
+## MPI-ESM-2-HR
+## NorESM2-LM
+## NorESM2-MM
+
+#prior step: download wget scripts from ESGF server
+
 #downloading ESM outputs
-  base_dir <- "/home/bcalp/UQ"
+  base_dir <- "/home/bcalp/UQ" 
   
   htr_download_ESM(
     hpc = NA,
-    indir = file.path(base_dir, "data", "wget"),
-    outdir = file.path(base_dir, "data", "raw", var),
+    indir = file.path(base_dir, "data", "wget"), #directory for wget scripts
+    outdir = file.path(base_dir, "data", "raw", var), #directory for raw ESM output
     quiet = TRUE,
     security = FALSE)
   
-  htr_download_ESM(
-    hpc = NA,
-    indir = file.path(base_dir, "data", "wget"),
-    outdir = file.path(base_dir, "data", "raw", var),
-    quiet = TRUE,
-    security = FALSE,
-    openid = "3936266f-690e-4f0a-a7db-fddace71d4a6") #openid github-linked accts
-
 #merge files
   htr_merge_files(
     indir = file.path(base_dir, "data", "raw", var), # input directory
@@ -74,20 +80,6 @@ var <- "chlos"
   )
 
 #Generate ensemble
-  #ensemble by mean
-  htr_create_ensemble(
-    indir = file.path(base_dir, "data", "proc", "regridded", "yearly", var), # input directory
-    outdir = file.path(base_dir, "data", "proc", "ensemble", "mean", var), # output directory
-    model_list = c("ACCESS-ESM1-5","CanESM5","CanESM5-1","CESM2-WACCM", "CMCC-ESM2","IPSL-CM6A-LR","MPI-ESM1-2-HR","MPI-ESM1-2-LR","NorESM2-LM","NorESM2-MM"), # list of models for ensemble
-    variable = var, # variable name
-    freq = "Omon", # original frequency of data
-    scenario = "ssp370", # scenario
-    mean = TRUE # if false, takes the median
-  )
-  ensemble_model <- list.files(file.path(base_dir, "data", "proc", "ensemble", "mean", var), full.names = TRUE)
-  ensemble <- rast(ensemble_model)
-  plot(ensemble$chlos_86)
-
   #ensemble by median
   htr_create_ensemble(
     indir = file.path(base_dir, "data", "proc", "regridded", "yearly", var), # input directory
@@ -100,5 +92,7 @@ var <- "chlos"
   )
   ensemble_model <- list.files(file.path(base_dir, "data", "proc", "ensemble", "median", var), full.names = TRUE)
   ensemble <- rast(ensemble_model)
-  plot(ensemble$chlos_86)
+  plot(ensemble$chlos_86)  #to plot ensemble at year 2100 (value of 'time' = 86)
+  
+##
   
