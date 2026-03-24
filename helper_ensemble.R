@@ -18,7 +18,7 @@
   
 #setup directory
   # set date
-  date <- "16022026"
+  date <- "25022026"
   # define variable
   var <- "chlos"
   # access ESM output
@@ -116,8 +116,8 @@
       ens_name <- str_extract(basename(ensemble_list[i]), ".*(?=\\.nc)")
       
       #convert chlos (kg/m^3) to chla_sqrt (sqrt (mg/m^3) )
-      chla_sqrt <- function(x){ round(sqrt(x * 1000000), 5) }
-      esm_converted <- st_apply(ens_selected,1:2, chla_sqrt, rename = TRUE)
+      chla_sqrt <- function(x){ sqrt(x * 1000000) }
+      esm_converted <- st_apply(ens_selected,1:3, chla_sqrt, rename = TRUE)
       
       ens_snapshot_baseline <- esm_converted[,,,1] #2015:1 :: 2100:86
       ens_snapshot_future <- esm_converted[,,,86]
@@ -130,24 +130,24 @@
       
       options(digits = 10)
       ens_baseline_summary <- ens_baseline_df %>% 
-        summarise(mean_delta = mean(chla_sqrt_baseline, na.rm =T), 
-                  median_delta = median(chla_sqrt_baseline, na.rm =T), 
-                  Q1_delta = quantile(chla_sqrt_baseline, 0.25, na.rm =T), 
-                  Q3_delta = quantile(chla_sqrt_baseline, 0.75, na.rm =T), 
-                  min_delta = min(chla_sqrt_baseline, na.rm = T),
-                  max_delta = max(chla_sqrt_baseline, na.rm = T))
+        summarise(mean = mean(chla_sqrt_baseline, na.rm =T), 
+                  median = median(chla_sqrt_baseline, na.rm =T), 
+                  Q1 = quantile(chla_sqrt_baseline, 0.25, na.rm =T), 
+                  Q3 = quantile(chla_sqrt_baseline, 0.75, na.rm =T), 
+                  min = min(chla_sqrt_baseline, na.rm = T),
+                  max = max(chla_sqrt_baseline, na.rm = T))
       
       print(paste("Ensemble: ",ens_name,sep=""))
       print("Baseline (yr 2015)")
       print(ens_baseline_summary) 
       
       ens_future_summary <- ens_future_df %>% 
-        summarise(mean_delta = mean(chla_sqrt_future, na.rm =T), 
-                  median_delta = median(chla_sqrt_future, na.rm =T), 
-                  Q1_delta = quantile(chla_sqrt_future, 0.25, na.rm =T), 
-                  Q3_delta = quantile(chla_sqrt_future, 0.75, na.rm =T), 
-                  min_delta = min(chla_sqrt_future, na.rm = T),
-                  max_delta = max(chla_sqrt_future, na.rm = T))
+        summarise(mean = mean(chla_sqrt_future, na.rm =T), 
+                  median = median(chla_sqrt_future, na.rm =T), 
+                  Q1 = quantile(chla_sqrt_future, 0.25, na.rm =T), 
+                  Q3 = quantile(chla_sqrt_future, 0.75, na.rm =T), 
+                  min = min(chla_sqrt_future, na.rm = T),
+                  max = max(chla_sqrt_future, na.rm = T))
       
       print("Future (yr 2100)")
       print(ens_future_summary) 

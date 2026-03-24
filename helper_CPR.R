@@ -25,7 +25,7 @@ library(rnaturalearth)
 #socpr - 10.26179/r7sm-9y85
 
 # set date for version control of output
-date <- "07112025"
+date <- "09112025" #format DDMMYYYY
 
 #01 to map global CPR
 
