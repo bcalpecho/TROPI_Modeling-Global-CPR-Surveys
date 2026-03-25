@@ -42,11 +42,13 @@
     aggregate_ncdf(survey_list, "eightday")
     #monthly OC-CCI
     aggregate_ncdf(survey_list, "monthly")
+  
   #2.2 extract raster data at CPR sampling points
     #8-day OC-CCI
     extract_chla(survey_list, "eightday") 
     #monthly OC-CCI
     extract_chla(survey_list, "monthly")
+  
   #2.3 Fill-up gaps of eight-day by monthly OC-CCI values if available
     fill_up_gaps(survey_list)
 
@@ -55,11 +57,13 @@
   #3.1 get abundance list of CPR surveys
   file.list <- list.files(path = "data_input/CPR_on-process/", pattern = "*\\complete.csv", full.names = TRUE)
   
-  #3.2
+  #3.2 Compute for proportions of zooplankton trophic groups
   compute_proportions_perSurvey(file.list)
-  #3.3
+  
+  #3.3 Combining variables altogether into a dataframe
   generate_df_perSurvey()
-  #3.4
+  
+  #3.4 generate GLOBAL dataframe and compute for ratios
   generate_globalCPR_dataframe(date)
   
 # 4 Model the Global CPR ####
@@ -92,13 +96,17 @@
     write_rds(Omni_mdl_zib, "Output/previousModels/mdl_export/Omni_mdl_zib.rds")
   
 # 5 Assess the Model ####
-  #5.1 
+    
+  #5.1 to check for normality and heteroscedasticity of the model residuals 
     lapply(mdl_list, dharma)
-  #5.2
+    
+  #5.2 to plot the intercepts of Longhurst Provinces
     plot_Longhurst(mdl_list)
-  #5.3
+    
+  #5.3 to plot point density plots of Tow within Survey slope and intercept
     plot_TowSlopeAndIntercept(mdl_list)
-  #5.4
+    
+  #5.4 to plot residuals of models with and without the random effects
     plot_residuals(mdl_list)
   
 # 6b Predict Global CPR ####
@@ -130,11 +138,14 @@
     compute_zoop_delta(mdl_list)
   
 # 7 Plot visual summary of model ####
-  #7.1 
+  
+  #7.1 summary for model of omnivores
     plot_model_summary_omnivores(date)
-  #7.2 
+    
+  #7.2 summary for model of carnivores
     plot_model_summary_carnivores(date)
-  #7.3 
+  
+  #7.3 summary for model of gelatinous filter-feeders
     plot_model_summary_filterfeeders(date)
   
 ## End ##
