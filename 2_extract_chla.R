@@ -23,11 +23,13 @@
     
     ## Load data - read in list of netcdf files
       if(frequency == "eightday"){
-        eightday_OCCCI <- list.files(path = "C:/Users/power/Desktop/OC-CCI/Global", pattern = "*\\.nc4", full.names = TRUE) #temporary file source due to large file size
+        #eightday_OCCCI
+        ncdf_list <- list.files(path = "C:/Users/power/Desktop/OC-CCI/Global", pattern = "*\\.nc4", full.names = TRUE) #temporary file source due to large file size
         #eightday_OCCCI <- list.files(path = "data_input/OCCCI/eightday/", pattern = "*\\.nc4", full.names = TRUE) #temporary file source due to large file size
         
       }else if(frequency == "monthly"){
-        monthly_OCCCI <- list.files(path = "C:/Users/power/Desktop/OC-CCI/Global monthly", pattern = "*\\.nc4", full.names = TRUE) #temporary file source due to large file size
+        #monthly_OCCCI
+        ncdf_list <- list.files(path = "C:/Users/power/Desktop/OC-CCI/Global monthly", pattern = "*\\.nc4", full.names = TRUE) #temporary file source due to large file size
         #monthly_OCCCI <- list.files(path = "data_input/OCCCI/monthly/", pattern = "*\\.nc4", full.names = TRUE) #temporary file source due to large file size
         
       }else{ stop("Wrong frequency indicated", call. = FALSE) }
@@ -133,7 +135,7 @@
             st_set_dimensions("band", values = time.l[[j]][,1], names = "time")
           
           #progress update
-          print(paste("file #:",j,"out of ", length(rast_list),sep =""))
+          print(paste("file #:",j," out of ", length(rast_list),sep =""))
           print(basename(rast_list[j]))
           #extract
           chla_ext <- st_extract(chla, cpr_coords, time_column = "sampleTime_utc", interpolate_time = T)
@@ -160,12 +162,11 @@
 
 #3. Fill-up gaps by monthly OC-CCI values
  
-  #setup for date and data input
-  date_chla <- "03032026"
-  
   #to be functional, convert file source from Output to data_input 
   
   fill_up_gaps <- function(survey_list){
+    #setup for date and data input
+    date_chla <- "03032026"
     
     for(i in 1:length(survey_list)){
       #extract from 8-day (to read output of previous function "extract_chla")

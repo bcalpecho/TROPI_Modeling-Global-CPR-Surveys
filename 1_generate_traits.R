@@ -5,7 +5,13 @@
 # output: csv file
 # ---
 
-##Adapted from
+##Aims
+#1. Extract from Pata & Hunt (2023) trait table by species and trait list
+#2. Fill-up gaps by deriving trait values at genus level
+#3. Generate trait table
+#4. Compute for taxon abundances
+
+###Code for aims 1 and 2 adapted from
 #'7-Database_subset_template'
 # ---
 # title: "Template for subsetting the database"
@@ -14,16 +20,13 @@
 # output: html_document
 # Repository: https://github.com/Pelagic-Ecosystems/Zooplankton_trait_database
 # ---
-##
+# Article Citation: Pata, P. R., & Hunt, B. P. V. (2023). Harmonizing marine zooplankton trait data toward a mechanistic understanding of ecosystem functioning. Limnology and Oceanography, 70(S1), S8–S27. https://doi.org/10.1002/lno.1247
+###
 
-##Aims
-#1. Extract from Pata & Hunt (2023) trait table by species and trait list
-#2. Fill-up gaps by deriving trait values at genus level
-#3. Generate trait table
 
 #Input 
 ##Set date (version control of output)
-date <- "12062025" 
+date <- "20082025" 
 
 #### Load libraries and data ####
     packages <- c("tidyverse",
@@ -269,25 +272,77 @@ date <- "12062025"
     }
 
   #filter-or-not
-  ff.order <- c("Pyrosomida","Salpida","Dolioida","Copelata","Aplousobranchia","Phlebobranchia","Stolidobranchia")
-
-    assign_filter_or_not <- function(zoop.list){
-      zoop.list %>% 
+    assign_filter_or_not <- function(zoop_list){
+      ff.order <- c("Pyrosomida","Salpida","Dolioida","Copelata","Aplousobranchia","Phlebobranchia","Stolidobranchia")
+      zoop_list %>% 
         mutate(filter_or_not = case_when(order %in% ff.order ~ "1",
                                          .default = "0")) %>% 
         relocate(filter_or_not, .after = "traitValue")
     }
+    
+  #Integrate Campbell (2023) trait table 
+    
+    
+  #Other trait list for comparison
+    
 
   species.list <- species.list %>% 
     import_TG.PataHunt() %>% 
     assign_filter_or_not()
 
-  ##Final Output
-    write_csv(species.list, paste("Output/traits/TG_trait-table-",date,".csv",sep=""))
-
   #check which have duplicated traitValues
-    species.list$scientificName[duplicated(species.list$aphiaID)]
-  
+    check_duplicate <- function(species_list){
+      
+      #check which have duplicated 'traitValues'
+      if(anyDuplicated(species.list$aphiaID) > 0){
+        cat("Need for review!\nDetected duplicate in assigned trait values for: ")
+        print(unique(species.list$scientificName[duplicated(species.list$aphiaID)]))
+      }else if(anyDuplicated(species.list$aphiaID) == 0){
+        cat("Looks good!\nNo detected duplicates")
+      }else{ stop("Error in duplicate checking", call. = FALSE)}
+      
+      ##Save trait table
+      print(paste0("Trait table saved: Output/traits/TG_trait-table-",date,".csv"))
+      write_csv(species.list, paste("Output/traits/TG_trait-table-",date,".csv",sep=""))
+    }
+
+    
+  #20.08.2025
+    
+    #NOT WORKING
+
+    update_tg <- function(tg, taxon, taxonomicRank, trait_table){
+        trait_table_rev <- trait_table %>% 
+          rename(TG_old = FG_complete)  %>% #need to rename FG_complete globally
+          mutate(FG_complete = case_when(
+            {{taxonomicRank}} == {{taxon}} ~ {{tg}},
+            .default = TG_old
+            )) %>% 
+          select(-c("TG_old")) %>% 
+          relocate(FG_complete, .before = "References")
+      
+        assign(traits_rev, trait_table_rev)
+        return(traits_rev)
+    }
+    update_tg("omnivore", "Euphausiacea", order, traits) 
+      
+    #working for Euphasiaceae 
+    trait_table_rev <- traits %>% 
+      rename(TG_old = FG_complete)  %>% #need to rename FG_complete globally
+      mutate(FG_complete = case_when(
+        order == "Euphausiacea" ~ "omnivore",
+        .default = TG_old
+      )) %>% 
+      select(-c("TG_old")) %>% 
+      relocate(FG_complete, .before = "References")
+    
+    
+    write_csv(trait_table_rev, paste("Output/data/traits/trait-table-revised_",date,".csv",sep=""))
+    
   #Remaining issue: duplicated traitValues are not yet removed resulting to many-to-many relationships 
     #Current sol'n: manually review the trait table
-  #12.06.2025 Latest revision for this code
+  
+  #Latest revision for this code: 
+  #26.06.2025 add abundance calculation to aim #4
+  #28.07.2025 Moved aim #4 to 0_wrangling_CPR
+  #future: integrate other trait lists

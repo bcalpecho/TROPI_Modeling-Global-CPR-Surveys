@@ -10,6 +10,8 @@
                 "ggpointdensity",
                 "marginaleffects",
                 "glmmTMB",
+                "MuMIn",
+                "GGally",
                 "DHARMa",
                 "gstat",
                 "sp",
@@ -649,7 +651,68 @@
       write_rds(df, paste0("data_input/global/df_complete_",date_newVersion,".rds")) 
       
     }
-
+    
+# 4_model_globalCPR :
+    
+    #4.1 to generate a summary of proportion contributed by fixed and random effects to the total variance of the model
+    summary_mdlVariance <- function(mdls){
+      tibble_variance_summary <- tibble(mdl = c("Filter_mdl_zib", "Omni_mdl_zib", "Carni_mdl_zib"),
+                                        FixedEffect_proportion = c(1,2,3),
+                                        RandomEffect_proportion = c(1,2,3),
+                                        TowWithinSurvey_proportion = c(1,2,3),
+                                        LonghurstProvinces_proportion = c(1,2,3))  
+      
+      for(i in 1:length(mdls)){
+        mdl_summary <- summary(mdls[[i]])
+        TG <- names(mdls[i])
+        if(TG == "Carni"){
+          if(exists("Carni_mdl_zib_R2") == FALSE){
+            mdl_Rsquare <- MuMIn::r.squaredGLMM(mdls[[i]])
+            print("missing")
+          }else{ mdl_Rsquare <- Carni_mdl_zib_R2}
+          
+        }else if(TG == "Omni"){
+          if(exists("Omni_mdl_zib_R2") == FALSE){
+            mdl_Rsquare <- MuMIn::r.squaredGLMM(mdls[[i]])
+            print("missing")
+          }else{ mdl_Rsquare <- Omni_mdl_zib_R2}
+          
+        }else if(TG == "Filter"){
+          if(exists("Filter_mdl_zib_R2") == FALSE){
+            mdl_Rsquare <- MuMIn::r.squaredGLMM(mdls[[i]])
+            print("missing")
+          }else{ mdl_Rsquare <- Filter_mdl_zib_R2}
+          
+        }else(stop ("Error in determining R^2: misidentified trophic group"))
+        
+        #(proportion of variation) overall contribution of fixed effects to mdl variance
+        var_FE <- mdl_Rsquare[1]
+        #(proportion of variation) overall contribution of REs to mdl variance
+        var_RE <- mdl_Rsquare[2] - mdl_Rsquare[1]
+        #Conditional R2
+        var_total <- mdl_Rsquare[2]
+        
+        #get variance
+        #Tow within Survey
+        var_survey <- mdl_summary$varcor$cond$`survey:tow_no`[1] #gets the variance 
+        #Longhurst Provinces
+        var_lh <- mdl_summary$varcor$cond$`longhurst`[1]      
+        
+        #contribution of each RE in relative terms
+        #Tow within Survey
+        rel_var_survey <- (var_survey)/(var_survey + var_lh) * var_RE
+        #Longhurst Provinces
+        rel_var_LH <- (var_lh)/(var_survey + var_lh) * var_RE
+        
+        tibble_variance_summary$FixedEffect_proportion[i] <- var_FE
+        tibble_variance_summary$RandomEffect_proportion[i] <- var_RE
+        tibble_variance_summary$TowWithinSurvey_proportion[i] <- rel_var_survey
+        tibble_variance_summary$FixedEffect_proportion[i] <- rel_var_LH
+      }        
+      view(tibble_variance_summary)
+    } 
+    
+    
 # 5_assess_models : 
   
   # Create a publication-ready theme (Adapted from 2025 UQ MME Lab Winter R Workshop)
@@ -677,8 +740,8 @@
       panel.grid = element_blank()
     )
 
-  # 5.1
-  dharma <- function(model) {
+  #5.1 quantile-quantile plot to assess normality of residuals
+  plot_QQ <- function(model) {
     simulationOutput <- simulateResiduals(fittedModel = model, plot = FALSE)
     
     # Wrap the base R plot call in a formula using wrap_elements
@@ -691,7 +754,76 @@
     ))
   }
   
-  #5.2
+  #5.2 mean variance plot to assess homogeneity of variance
+  plot_meanVariance <- function(mdl_list){
+    
+    load("data_input/global/global_df.RData")
+    
+    for(i in 1:length(mdl_list)){
+      TG <- names(mdl_list[i])  
+      print(paste0("Model in process: ",TG))
+      
+      if(TG == "Omni"){
+        print("Success 1")
+        df_Omni_noNA <- df %>% filter(!is.na(chla_sqrt)) %>% filter(!is.na(ROC_SVT_zib)) %>% filter(!is.na(tow_days))
+        Omni_meanVariance <- ggplot(df_Omni_noNA) + aes(fitted(Omni_mdl_zib), resid(Omni_mdl_zib, type = "pearson")) +
+          geom_hex(bins = 80) + geom_smooth(method = "loess") + pub_theme + theme(legend.position = c(.9, .8)) +
+          scale_fill_viridis(begin = 0, end = .9, option = "C", limit = range(c(1,1200))) +
+          theme(plot.title = element_text(hjust = 0.5), ) +
+          labs(fill = "Frequency") + ylab("Residual") + xlab("Fitted Value")
+        
+      }else if(TG == "Carni"){
+        print("Success 2")
+        df_Carni_noNA <- df %>% filter(!is.na(chla_sqrt)) %>% filter(!is.na(RCO_SVT_zib)) %>% filter(!is.na(tow_days))
+        Carni_meanVariance <- ggplot(df_Carni_noNA) + aes(fitted(Carni_mdl_zib), resid(Carni_mdl_zib, type = "pearson")) +
+          geom_hex(bins = 80) + geom_smooth(method = "loess") + pub_theme + theme(legend.position = c(.9, .8)) +
+          scale_fill_viridis(begin = 0, end = .9, option = "C", limit = range(c(1,1200))) +
+          theme(plot.title = element_text(hjust = 0.5), ) +
+          labs(fill = "Frequency") + ylab("Residual") + xlab("Fitted Value")
+        
+      }else if(TG == "Filter"){
+        df_FF_noNA <- df_modified %>% filter(!is.na(chla_sqrt)) %>% filter(!is.na(RFF_SVT_zib)) %>% filter(!is.na(tow_days))
+        Filter_meanVariance <- ggplot(df_FF_noNA) + aes(fitted(Filter_mdl_zib), resid(Filter_mdl_zib, type = "pearson")) +
+          geom_hex(bins = 80) + geom_smooth(method = "loess") + pub_theme + theme(legend.position = c(.9, .8)) +
+          scale_fill_viridis(begin = 0, end = .9, option = "C", limit = range(c(1,1200))) +
+          theme(plot.title = element_text(hjust = 0.5), ) +
+          labs(fill = "Frequency") + ylab("Residual") + xlab("Fitted Value")
+        
+        print("Success 3")
+      }else{stop("Error in designated trophic group: possible misidentified model")}
+    }
+    
+    ## Residual plot
+    # #to save individual plots
+    # ggsave(paste("Output/illustrations/Filter_meanVariance_",date,".png",sep=""), plot = Filter_meanVariance,
+    #        width = 9, height = 6, dpi = 300)
+    #
+    # ggsave(paste("Output/illustrations/Omni_meanVariance_",date,".png",sep=""), plot = Omni_meanVariance,
+    #        width = 9, height = 6, dpi = 300)
+    #
+    # ggsave(paste("Output/illustrations/Carni_meanVariance_",date,".png",sep=""), plot = Carni_meanVariance,
+    #        width = 9, height = 6, dpi = 300)
+    # #
+    
+    design <- "
+                A
+                B
+                C
+              "
+    
+    (meanVariance_patch <- Filter_meanVariance + Omni_meanVariance + Carni_meanVariance +
+       plot_layout(design = design) +
+       plot_annotation(
+         tag_levels = "A",
+         theme = theme(plot.title = element_text(size = 16, face = "bold"))
+       )
+    )
+    ggsave(paste("Output/illustrations/meanVariance_",date,".png",sep=""), plot = meanVariance_patch,
+           width = 8, height = 10, dpi = 300)
+    print(paste0("Combined plot saved: meanVariance_",date,".png"))
+  }
+  
+  #5.3 to plot the intercepts of Longhurst Provinces
   plot_Longhurst <- function(model_list){
     for(i in 1:length(model_list)){
       REs <- ranef(model_list[[i]], condVar = TRUE) #Update the model input
@@ -738,7 +870,7 @@
     }
   }
   
-  #5.3
+  #5.4 to plot point density plots of Tow within Survey slope and intercept
   ### Tow slope and intercept ###
   
   plot_TowSlopeAndIntercept <- function(model_list){
@@ -772,7 +904,7 @@
     }  
   }
   
-  #5.4 
+  #5.5 to plot residuals of models with and without the random effects
   plot_residuals <- function(model_list){
     for(i in 1:length(model_list)){
       vc <- VarCorr(model_list[[i]])

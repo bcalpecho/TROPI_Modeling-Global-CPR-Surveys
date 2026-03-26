@@ -1,6 +1,6 @@
-####                                      ####
-# STEP-BY-STEP DATA PREPARATION AND ANALYSIS #
-####                                      ####
+####                          ####
+# DATA PREPARATION AND ANALYSIS #
+####                          ####
 
 # 0 Setup ####
   # Load functions and set directories
@@ -68,21 +68,13 @@
   
 # 4 Model the Global CPR ####
 
-  # Import data
-    df <- read_rds(paste("data_input/global/df_complete_",df_date,".rds",sep=""))
+  # 4.1 Import data
+    #for omnivores and carnivores
+    df <- read_rds(paste0("data_input/global/df_complete_",date,".rds"))
+    #for filter-feeders
+    df_Filter <- read_rds(paste0("data_input/global/df_complete_Filter_",date,".rds"))
   
-  #set ceiling for chl-a values
-    df <- df %>%
-      mutate(chla_withCeilingAt3 = case_when(chla > 3 ~ 3,
-                                             .default = chla)) 
-  #to remove NA values,
-    df_noNA <- df %>% filter(!is.na(chla)) 
-  
-  #final models
-    Filter_mdl_zib <- glmmTMB(RFF_SVT_zib ~ chla_sqrt + survey + (1 + tow_days | survey: tow_no) + (1 | longhurst), 
-                              ziformula = ~1,
-                              data = df_modified, family = beta_family(link = "logit"))
-    
+  # 4.2 Selected models
     Omni_mdl_zib <- glmmTMB(ROC_SVT_zib ~ chla_sqrt + survey + (1 + tow_days | survey: tow_no) + (1 | longhurst), 
                             ziformula = ~1,
                             data = df, family = beta_family(link = "logit"))
@@ -90,23 +82,65 @@
     Carni_mdl_zib <- glmmTMB(RCO_SVT_zib ~ chla_sqrt + survey + (1 + tow_days | survey: tow_no) + (1 | longhurst), 
                              ziformula = ~1,
                              data = df, family = beta_family(link = "logit"))
-  ###Export selected models
+    
+    Filter_mdl_zib <- glmmTMB(RFF_SVT_zib ~ chla_sqrt + survey + (1 + tow_days | survey: tow_no) + (1 | longhurst), 
+                              ziformula = ~1,
+                              data = df_Filter, family = beta_family(link = "logit"))
+  
+  # 4.3 to summarize the coefficients of the models
+    #determine R^2 (coefficient of determination)
+    Omni_mdl_zib_R2 <- MuMIn::r.squaredGLMM(Omni_mdl_zib)
+    Filter_mdl_zib_R2 <- MuMIn::r.squaredGLMM(Filter_mdl_zib)
+    Carni_mdl_zib_R2 <- MuMIn::r.squaredGLMM(Carni_mdl_zib)
+    
+    #extract coefficients
+    Filter_mdl_zib_coeff <- summary(Filter_mdl_zib)$coefficients$cond %>% as.data.frame()
+    Carni_mdl_zib_coeff<- summary(Carni_mdl_zib)$coefficients$cond %>% as.data.frame()
+    Omni_mdl_zib_coeff <- summary(Omni_mdl_zib)$coefficients$cond %>% as.data.frame()
+    
+    #summarize
+    tibble_models_zib <- tibble(
+      mdl = c("Filter_mdl_zib", "Omni_mdl_zib", "Carni_mdl_zib"),
+      Estimate = c(Filter_mdl_zib_coeff$Estimate[2],  Omni_mdl_zib_coeff$Estimate[2], Carni_mdl_zib_coeff$Estimate[2]),
+      StdError = c(Filter_mdl_zib_coeff$`Std. Error`[2],  Omni_mdl_zib_coeff$`Std. Error`[2], Carni_mdl_zib_coeff$`Std. Error`[2]),
+      z_value = c(Filter_mdl_zib_coeff$`z value`[2], Omni_mdl_zib_coeff$`z value`[2], Carni_mdl_zib_coeff$`z value`[2]),
+      p_value = c(Filter_mdl_zib_coeff$`Pr(>|z|)`[2], Omni_mdl_zib_coeff$`Pr(>|z|)`[2], Carni_mdl_zib_coeff$`Pr(>|z|)`[2]),
+      PseudoR2_marginal = c(Filter_mdl_zib_R2[1], Omni_mdl_zib_R2[1], Carni_mdl_zib_R2[1]),
+      PseudoR2_conditional = c(Filter_mdl_zib_R2[2], Omni_mdl_zib_R2[2], Carni_mdl_zib_R2[2]))
+    
+  # 4.4 to generate a summary of proportion contributed by fixed and random effects to the total variance of the model
+    
+    #prior step
+    mdl_list <- list(Carni_mdl_zib, Omni_mdl_zib, Filter_mdl_zib)
+    names(mdl_list) <- c("Carni","Omni","Filter")
+    
+    #to create a table summary of contributions of fixed and random effects to variance in the model
+    summary_mdlVariance(mdl_list)
+    
+  # 4.5 to save/export selected models
     write_rds(Filter_mdl_zib, "Output/previousModels/mdl_export/Filter_mdl_zib.rds")
     write_rds(Carni_mdl_zib, "Output/previousModels/mdl_export/Carni_mdl_zib.rds")
     write_rds(Omni_mdl_zib, "Output/previousModels/mdl_export/Omni_mdl_zib.rds")
   
 # 5 Assess the Model ####
+  
+  #5.0 list the selected models (double check the order of mdl_list and names)
+    mdl_list <- list(Carni_mdl_zib, Omni_mdl_zib, Filter_mdl_zib)
+    names(mdl_list) <- c("Carni","Omni","Filter")
     
-  #5.1 to check for normality and heteroscedasticity of the model residuals 
-    lapply(mdl_list, dharma)
+  #5.1 quantile-quantile plot to assess normality of residuals
+    lapply(mdl_list, plot_QQ)
     
-  #5.2 to plot the intercepts of Longhurst Provinces
+  #5.2 mean variance plot to assess homogeneity of variance
+    plot_meanVariance(mdl_list)
+    
+  #5.3 to plot the intercepts of Longhurst Provinces
     plot_Longhurst(mdl_list)
     
-  #5.3 to plot point density plots of Tow within Survey slope and intercept
+  #5.4 to plot point density plots of Tow within Survey slope and intercept
     plot_TowSlopeAndIntercept(mdl_list)
     
-  #5.4 to plot residuals of models with and without the random effects
+  #5.5 to plot residuals of models with and without the random effects
     plot_residuals(mdl_list)
   
 # 6b Predict Global CPR ####
@@ -120,8 +154,7 @@
     
     #process the SSP scenarios one-by-one (One ensemble each SSP scenario)
     
-    #load zooplankton GLMs
-    load("Output/previousModels/revision/final_zoop_mdls_21022026.RData") #need to revise the directory
+    #6.0 list the selected models (double check the order of mdl_list and names)
     mdl_list <- list(Carni_mdl_zib, Omni_mdl_zib, Filter_mdl_zib)
     names(mdl_list) <- c("Carni","Omni","Filter")
     
