@@ -319,21 +319,7 @@
       PseudoR2_marginal = c(Filter_mdl_zib_R2[1], Omni_mdl_zib_R2[1], Carni_mdl_zib_R2[1]),
       PseudoR2_conditional = c(Filter_mdl_zib_R2[2], Omni_mdl_zib_R2[2], Carni_mdl_zib_R2[2]))
     
-    # #to functionalize summarizing model coefficients
-    # mdl_coefficients <- function(mdl_list){
-    #   for(i in 1:length(mdl_list)){
-    #     
-    #     
-    #     #output
-    #     tibble_models_zib_CPRSurvey <- tibble()
-    #     
-    #     
-    #   }
-    #   
-    # }
-  
-    ##
-    #to compute for variance % contribution by random effects
+   #to compute for variance % contribution by random effects
     
     mdl_list <- list(Filter_mdl_zib, Omni_mdl_zib, Carni_mdl_zib)
     
@@ -395,53 +381,6 @@
     } 
 
     summary_mdlVariance(mdl_list)    
-    
-    #
-    
-    get_RE_var <- function(mdls){
-      tibble_variance_summary <- tibble(mdl = c("Filter_mdl_zib", "Omni_mdl_zib", "Carni_mdl_zib"),
-                                        FixedEffect_proportion = c(1,2,3),
-                                        RandomEffect_proportion = c(1,2,3),
-                                        TotalVariance = c(1,2,3),
-                                        TowWithinSurvey_proportion = c(1,2,3),
-                                        LonghurstProvinces_proportion = c(1,2,3))  
-      
-      for(i in 1:length(mdls)){
-        mdl_summary <- summary(mdls[[i]])
-        mdl_Rsquare <- MuMIn::r.squaredGLMM(mdls[[i]])
-        Omni_mdl_zib_R2 <- MuMIn::r.squaredGLMM(Omni_mdl_zib)
-        
-        #(proportion of variation) overall contribution of fixed effects to mdl variance
-        var_FE <- mdl_Rsquare[1]
-        #(proportion of variation) overall contribution of REs to mdl variance
-        var_RE <- mdl_Rsquare[2] - mdl_Rsquare[1]
-        #Conditional R2
-        var_total <- mdl_Rsquare[2]
-        
-        #get variance
-        #Tow within Survey
-        var_survey <- mdl_summary$varcor$cond$`survey:tow_no`[1] #gets the variance 
-        #Longhurst Provinces
-        var_lh <- mdl_summary$varcor$cond$`longhurst`[1]      
-        
-        #contribution of each RE in relative terms
-        #Tow within Survey
-        rel_var_survey <- (var_survey)/(var_survey + var_lh) * var_RE
-        #Longhurst Provinces
-        rel_var_LH <- (var_lh)/(var_survey + var_lh) * var_RE
-        
-        tibble_variance_summary$FixedEffect_proportion[i] <- var_FE
-        tibble_variance_summary$RandomEffect_proportion[i] <- var_RE
-        tibble_variance_summary$TotalVariance[i] <- var_total
-        tibble_variance_summary$TowWithinSurvey_proportion[i] <- rel_var_survey
-        tibble_variance_summary$FixedEffect_proportion[i] <- rel_var_LH
-      }        
-      view(tibble_variance_summary)
-    } 
-    
-    get_RE_var(mdl_list)    
-    
-    #
     
     #Omni
       Omni_summary <- summary(Omni_mdl_zib)
