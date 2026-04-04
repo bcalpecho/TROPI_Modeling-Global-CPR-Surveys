@@ -462,20 +462,34 @@ map_globalcpr <- function(file.list){
               dpi = 400)
 }
 
-#03. to update species list
-  # #set date for version control
-  # old_version <- "02062025"
-  # date <- "26072025"
-  #   #old list
-  #   taxon_list_old <- read_csv(paste("data_input/CPR_on-process/cpr_all_aphia-taxon_",date,".csv", sep=""))
-  #   #new list
-  #   taxon_list_new <- read_csv(paste("data_input/CPR_on-process/cpr_all_aphia-taxon_",date,".csv", sep="")) #update file name
-  #   #combine
-  #   taxon_list <- taxon_list_new %>% left_join(taxon_list_old, by = ("aphiaID"))
-  #   #add new to old list
-  #   taxon_list <- taxon_list %>% mutate(taxon = case_when())
-  #   #export
-  #   write_csv(taxon_list, paste("data_input/CPR_on-process/cpr_all_aphia-taxon_",date,".csv", sep=""))
+# 03. to update species list
+#set date for version control
+  generate_globalCPR_taxonlist <- function(){
+    auscpr_taxonlist <- read_csv("data_input/CPR/CPR_raw_data/auscpr_taxonlist.csv")
+    mba_taxonlist <- read_csv("data_input/CPR/CPR_raw_data/socpr_taxonlist.csv")
+    socpr_taxonlist <- read_csv("data_input/CPR/CPR_raw_data/mba_cpr_taxonlist.csv")
+    
+    #unique_taxonlist <- merged_taxonlist %>%
+      
+    pattern <- "^\\w+(?:[ .]+(?!(?:[mjf]|zoea|agg|sol|Grp[135]|larvae|megalopa|CIV|CV)\\b)(?:spp\\.?|\\w+))?"
+    
+    auscpr_taxonlist$taxon_auscpr <- str_extract(auscpr_taxonlist$taxon_auscpr, pattern)
+    auscpr_taxonlist_merged <- auscpr_taxonlist %>% 
+      group_by(aphiaID) %>% 
+      summarise(taxa_name = first(taxon_auscpr))
+    
+    merged_taxonlist <- auscpr_taxonlist_merged %>% 
+      full_join(socpr_taxonlist %>% select("aphia_id","taxa_name"), by = c("aphiaID" = "aphia_id","taxa_name")) %>% 
+      full_join(mba_taxonlist, by = c("aphiaID", "taxa_name" = "taxon"))    
+      
+    merged_taxonlist <- merged_taxonlist %>% 
+      group_by(aphiaID) %>% 
+      summarise(taxa_name = first(taxa_name))
+    
+    #output csv file of merged taxa list
+    write_csv(merged_taxonlist, "output/CPR/cpr_merged_taxonlist.csv")
+    write_csv(merged_taxonlist, "data_input/CPR/cpr_merged_taxonlist.csv")
+  }
 
 #04. to compute abundances per taxon  
 

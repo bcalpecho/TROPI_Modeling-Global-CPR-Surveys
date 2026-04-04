@@ -11,18 +11,17 @@
   
   #### set date and list of models for version control and coverage of CPR surveys
   date <- "29032026"
-  #survey_list <- c("auscpr","npacific","natlantic", "socpr")
-  survey_list <- c("auscpr", "socpr","npacific","natlantic")
+  tsurvey_list <- c("auscpr", "socpr","npacific","natlantic")
   
 # 1 Generate trait table ####
 
   #Get species list
   # list of unique AphiaID in four CPR surveys (836 total unique AphiaID)
-    species.list <- read_csv("data_input/CPR/cpr_all_aphia-taxon.csv")
+    species.list <- read_csv("data_input/CPR/cpr_merged_taxonlist.csv") #generated through 'generate_globalCPR_taxonlist()' function in 'helper_CPR' script
 
   # taxonomy table (Pata & Hunt, 2023)
     # Citation: Pata, P. R., & Hunt, B. P. V. (2023). Harmonizing marine zooplankton trait data toward a mechanistic understanding of ecosystem functioning. Limnology and Oceanography, 70(S1), S8–S27. https://doi.org/10.1002/lno.12478
-    taxonomy <- read_csv("data_input/PataHunt_traits/taxonomy_table_20230628.csv")
+    taxonomy <- read_csv("data_input/PataHunt_taxonomy_table_20230628.csv")
 
   # match species list with taxonomy file to get taxonID AND keep AphiaID without taxonID
     species.list <- species.list  %>%
@@ -33,9 +32,9 @@
       import_TG.PataHunt() %>%  #Function 1.1 Integrate Pata & Hunt (2023) assigned trait value to species list
       assign_filter_or_not() #Function 1.2 Assign 'gelatinous filter-feeders' group
   
-    check_duplicate(species.list) #Function 1.3 check for duplicates and save trait table
-    #To finalize trait table, a manual review by opening in a spreadsheet of the trait table is needed to verify assigned trait value.
-
+    detect_duplicateAssignedTrait(species.list) #Function 1.3 check for duplicates and save trait table
+    #To finalize trait table, perform a manual review of assigned traits to verify trait values.
+    
 # 2 Extract Chl-a ####
   
   #2.1 aggregate raster of OC-CCI
@@ -61,7 +60,7 @@
   #3.2 Compute for proportions of zooplankton trophic groups
     compute_proportions_perSurvey(file.list)
   
-  #3.3 Combining variables altogether into a dataframe
+  #3.3 Combining variables altogether into a dataframe for each CPR survey
     generate_df_perSurvey(date)
   
   #3.4 generate GLOBAL dataframe and compute for ratios
@@ -135,7 +134,7 @@
     names(mdl_list) <- c("Carni","Omni","Filter")
     
   #5.1 quantile-quantile plot to assess normality of residuals
-    lapply(mdl_list, plot_QQ)
+    plot_QQ(mdl_list)
     
   #5.2 mean variance plot to assess homogeneity of variance
     plot_meanVariance(mdl_list)
@@ -146,7 +145,7 @@
   #5.4 to plot point density plots of Tow within Survey slope and intercept
     plot_TowSlopeAndIntercept(mdl_list)
     
-  4#5.5 to plot residuals of models with and without the random effects
+  #5.5 to plot residuals of models with and without the random effects
     plot_residuals(mdl_list)
   
 # 6b Predict Global CPR ####
@@ -170,7 +169,7 @@
     #ssp585
     predict_zoop_delta(ensembles_median[4], mdl_list)
   
-  #6b.3 to compute for delta of trophic groups between 2015 and 2100
+   #6b.3 to compute for delta of trophic groups between 2015 and 2100
     compute_zoop_delta(mdl_list)
   
 # 7 Plot visual summary of model ####

@@ -37,8 +37,8 @@
   #1.1 Integrate Pata & Hunt (2023) assigned trait value to species list
   import_TG.PataHunt <- function(species.list){
     # Read the trait dataset
-    zoop.traits <- read_csv("output/traits/TG_trait_subset_03-06-2025.csv")
-    copepod.traits <- read_csv("output/traits/TG_copepods_combined_03-06-2025.csv")
+    zoop.traits <- read_csv("data_input/traits/TG_trait_subset_03-06-2025.csv")
+    copepod.traits <- read_csv("data_input/traits/TG_copepods_combined_03-06-2025.csv")
     
     # Select the relevant columns
     zoop.traits <- zoop.traits %>% 
@@ -59,7 +59,7 @@
       left_join(zoop.traits, by = c("taxonID", "scientificName", "class", "order", "family", "genus")) %>% 
       left_join(copepod.traits, by = c("taxonID", "scientificName", "class", "order", "family", "genus")) %>% 
       #rename column of traitValue to "Pata&Hunt.TG"
-      mutate(traitValue = ifelse(is.na(traitValue), "not determined", traitValue))
+      mutate(traitValue = ifelse(is.na(traitValue), "not_determined", traitValue))
     
     return(species.list)
   }
@@ -74,7 +74,7 @@
   }
   
   #1.3 check for duplicates and save finalized trait table
-  check_duplicate <- function(species_list){
+  detect_duplicateAssignedTrait <- function(species_list){
     
     #check which have duplicated 'traitValues'
     if(anyDuplicated(species.list$aphiaID) > 0){
@@ -85,8 +85,23 @@
     }else{ stop("Error in duplicate checking", call. = FALSE)}
     
     ##Save trait table
-    print(paste0("Trait table saved: output/traits/TG_trait-table-",date,".csv"))
-    write_csv(species.list, paste("output/traits/TG_trait-table-",date,".csv",sep=""))
+    write_csv(species.list, paste("output/df/TG_trait-table-",date,".csv",sep=""))
+    write_csv(species.list, paste("data_input/traits/TG_trait-table-",date,".csv",sep=""))
+    print(paste0("Trait table saved: TG_trait-table-",date,".csv"))
+  }
+  
+  #1.4 compare previous and current trait table 
+  compare_traitTables <- function(){
+    oldTraitTable <- read_csv(paste0("data_input/traits/TG_trait-table-08082d025.csv"))
+    newTraitTable <- read_csv(paste0("output/df/TG_trait-table-",date,".csv"))
+    
+    comparison_tibble <- oldTraitTable %>% 
+      select(c("aphiaID","scientificName","FG_latest")) %>% 
+      rename("TG_PreviousTraitTable" = "FG_latest") %>% 
+      full_join(newTraitTable %>% select(c("aphiaID","traitValue")), by = c("aphiaID")) %>% 
+      rename("TG_newTraitTable" = "traitValue")
+    
+    view(comparison_tibble)
   }
   
   ## See '1_generate_traits' script for full preparation of trait table.
@@ -750,17 +765,46 @@
     )
 
   #5.1 quantile-quantile plot to assess normality of residuals
-  plot_QQ <- function(model) {
-    simulationOutput <- simulateResiduals(fittedModel = model, plot = FALSE)
+  plot_QQ <- function(mdl_list) {
     
-    # Wrap the base R plot call in a formula using wrap_elements
-    # This captures the plot so patchwork can treat it like an object
-    wrap_elements(panel = ~plotQQunif(
+    for(i in 1:length(mdl_list)){
+    
+    TG <- names(mdl_list[i])  
+    print(paste0("QQ plot in process for: ", TG))
+    simulationOutput <- simulateResiduals(fittedModel = mdl_list[[i]], plot = FALSE)
+    
+    qq_plot <- wrap_elements(panel = ~plotQQunif(
       simulationOutput, 
       testUniformity = FALSE, 
       testOutliers = FALSE, 
       testDispersion = FALSE
     ))
+    
+    if(TG == "Omni"){
+      Omni_qq <- qq_plot
+    }else if(TG == "Carni"){
+      Carni_qq <- qq_plot
+    }else if(TG == "Filter"){
+      Filter_qq <- qq_plot
+    }else{ stop("Error in generating QQ plot") }
+    # To save individual plots
+    # ggsave(paste0("output/plots/",TG,"_QQplot_",date,".png"), plot = qq_plot,
+    #        width = 8, height = 10, dpi = 300)
+    # print(paste0("QQ plot saved: ",TG,"_QQplot_",date,".png"))
+    
+    }
+    # To save merged QQ plots 
+    print(paste0("Plotting and combining the plots"))
+    QQ_patch <- Omni_qq + Carni_qq + Filter_qq +
+      plot_layout(design = "ABC") +
+      plot_annotation(tag_levels = "A", 
+                      theme = theme(plot.title = element_text(size = 16, face = "bold"),
+                                    plot.margin = margin(2,2,2,2)))
+    
+    ggsave(paste("output/plots/QQplot_",date,".png",sep=""), plot = QQ_patch,
+           width = 10, height = 4, dpi = 600)
+    print(paste0("Plot saved: QQplot_",date,".png"))
+    
   }
   
   #5.2 mean variance plot to assess homogeneity of variance
@@ -827,13 +871,13 @@
     # )
     
     print(paste0("Plotting and combining the plots"))
-    meanVariance_patch <- Filter_meanVariance / Omni_meanVariance / Carni_meanVariance +
+    meanVariance_patch <- Omni_meanVariance / Carni_meanVariance / Filter_meanVariance +
       plot_annotation(tag_levels = "A", 
                       theme = theme(plot.title = element_text(size = 16, face = "bold"),
                                     plot.margin = margin(10,10,10,10)))
     
     ggsave(paste("output/plots/meanVariance_",date,".png",sep=""), plot = meanVariance_patch,
-           width = 8, height = 10, dpi = 300)
+           width = 10, height = 3, dpi = 300)
     print(paste0("Plot saved: meanVariance_",date,".png"))
   }
   
@@ -868,7 +912,7 @@
                           ymax=Intercepts+sd.interc),
                       width = 0,color="black") +
         geom_point(color = "black", size = 2) +
-        guides(size=FALSE,shape=FALSE) + 
+        guides(size="none",shape="none") + 
         theme(axis.text.x=element_text(size=10), 
               axis.title.x=element_text(size=13),
               panel.grid.minor.x = element_blank(),
@@ -1181,38 +1225,12 @@
 
     plot_model_summary_omnivores <- function(date){
       
-      # Create a publication-ready theme (Adapted from 2025 UQ MME Lab Winter R Workshop)
-      pub_theme <- theme_classic(base_size = 10, base_family = "sans") + # Family including Arial, Helvetica, Futura, Verdana, and Calibri
-        theme(
-          # Axis styling
-          axis.title = element_text(size = 14, face = "bold"),
-          axis.text = element_text(size = 12, colour = "black"),
-          axis.line = element_line(colour = "black", linewidth = 0.5),
-          axis.ticks = element_line(colour = "black", linewidth = 0.5),
-          
-          # Legend styling
-          legend.title = element_text(size = 10, face = "bold"),
-          legend.text = element_text(size = 8),
-          legend.position = "inside",
-          #legend.position.inside = c(0.85, 0.25),
-          legend.background = element_rect(fill = "white", colour = "black", linewidth = 0.5),
-          legend.margin = margin(2, 2, 2, 2),
-          
-          # Panel styling
-          panel.background = element_rect(fill = "white"),
-          plot.background = element_rect(fill = "white"),
-          
-          # Remove grid lines for cleaner look
-          panel.grid = element_blank()
-        )
-      
       #01 read in df and model
-      df <- read_csv(paste0("data_input/global_df_complete_",date_newVersion,".rds"))
-      df_filter <- read_csv(paste0("data_input/global_df_complete_Filter_",date_newVersion,".rds"))
-      
-      
+      # df <- read_csv(paste0("data_input/global_df_complete_",date,".rds"))
+      df_noNA <- df %>% filter(!is.na(chla_sqrt)) %>% filter(!is.na(ROC_SVT_zib)) %>% filter(!is.na(tow_days))
+
       #FIGURE 3
-      print("Figure 3 (omnivores) in preparation: predictions")
+      print("Visual summary of glm for omnivorous zooplankton in preparation")
       #02 plot model predictions by (A) chl-a and (B) CPR Survey
       #Omnivores proportion vs. Chl-a
       pop_preds_omni_chla <- predictions(Omni_mdl_zib, 
@@ -1323,8 +1341,8 @@
             theme = theme(plot.title = element_text(size = 12, face = "bold"))
           )
       )    
-      print(paste("Saved plot: output/illustrations/Omni_",date,".png",sep=""))
-      ggsave(paste("output/illustrations/Omni_",date,".png",sep=""), plot = final_patch,
+      print(paste("Saved plot: output/plots/Omni_",date,".png",sep=""))
+      ggsave(paste("output/plots/Omni_",date,".png",sep=""), plot = final_patch,
              width = 8, height = 10, dpi = 300)
       
     }
@@ -1332,35 +1350,14 @@
     
     plot_model_summary_carnivores <- function(date){
       # Create a publication-ready theme (Adapted from 2025 UQ MME Lab Winter R Workshop)
-      pub_theme <- theme_classic(base_size = 10, base_family = "sans") + # Family including Arial, Helvetica, Futura, Verdana, and Calibri
-        theme(
-          # Axis styling
-          axis.title = element_text(size = 14, face = "bold"),
-          axis.text = element_text(size = 12, colour = "black"),
-          axis.line = element_line(colour = "black", linewidth = 0.5),
-          axis.ticks = element_line(colour = "black", linewidth = 0.5),
-          
-          # Legend styling
-          legend.title = element_text(size = 10, face = "bold"),
-          legend.text = element_text(size = 8),
-          legend.position = "inside",
-          #legend.position.inside = c(0.85, 0.25),
-          legend.background = element_rect(fill = "white", colour = "black", linewidth = 0.5),
-          legend.margin = margin(2, 2, 2, 2),
-          
-          # Panel styling
-          panel.background = element_rect(fill = "white"),
-          plot.background = element_rect(fill = "white"),
-          
-          # Remove grid lines for cleaner look
-          panel.grid = element_blank()
-        )
-      
-      #01 read in model
-      load("output/previousModels/revision/fMdl_carni.RData") 
+      # #01 read in model
+      # load("output/previousModels/revision/fMdl_carni.RData") 
+      # df <- read_csv(paste0("data_input/global_df_complete_",date,".rds"))
+      df_noNA <- df %>% filter(!is.na(chla_sqrt)) %>% filter(!is.na(RCO_SVT_zib)) %>% filter(!is.na(tow_days))
+
       
       #FIGURE 4
-      print("Figure 4 (carnivores) in preparation: predicting outcomes")
+      print("Visual summary of glm for carnivorous zooplankton in preparation")
       #B. Carnivores
       #Carnivores proportion vs. Chl-a
       
@@ -1472,19 +1469,21 @@
           )
       )    
       
-      print(paste("Plot saved: output/illustrations/Carni_",date,".png",sep=""))
-      ggsave(paste("output/illustrations/Carni_",date,".png",sep=""), plot = final_patch,
+      print(paste("Plot saved: output/plots/Carni_",date,".png",sep=""))
+      ggsave(paste("output/plots/Carni_",date,".png",sep=""), plot = final_patch,
              width = 8, height = 10, dpi = 300)
       
     }
     
     
     plot_model_summary_filterfeeders <- function(date){
-      #01 read in model
-      load("output/previousModels/revision/fMdl_filterfeeder.RData") 
-      
+      # #01 read in model
+      # load("output/previousModels/revision/fMdl_filterfeeder.RData") 
+      # df_filter <- read_csv(paste0("data_input/global_df_complete_Filter_",date,".rds"))
+      df_noNA <- df_filter %>% filter(!is.na(chla_sqrt)) %>% filter(!is.na(RFF_SVT_zib)) %>% filter(!is.na(tow_days))
+
       #FIGURE 5
-      print("Figure 5 (gelatinous filter-feeders) in preparation: predicting outcomes")
+      print("Visual summary of glm for gelatinous filter-feeders in preparation")
       #C. Filter-feeders
       #Filter-feeders proportion vs. Chl-a
       pop_preds_FF_chla <- predictions(Filter_mdl_zib, 
@@ -1492,7 +1491,7 @@
                                        re.form = NA) # Zeros out random effects
       
       ff_plot_chla <- ggplot(data = pop_preds_FF_chla) + pub_theme + 
-        geom_point(data = df, 
+        geom_point(data = df_noNA, 
                    aes(x = chla_sqrt, y = RFF_SVT_zib), alpha = 0.1) +
         geom_ribbon(aes(x = chla_sqrt, y = estimate, 
                         ymin = conf.low, ymax = conf.high), alpha = 0.3, colour = "blue", linetype=2) + 
@@ -1601,8 +1600,8 @@
           )
       )    
       
-      print(paste("Plot saved: output/illustrations/Filter_",date,".png",sep=""))
-      ggsave(paste("output/illustrations/Filter_",date,".png",sep=""), plot = final_patch,
+      print(paste("Plot saved: output/plots/Filter_",date,".png",sep=""))
+      ggsave(paste("output/plots/Filter_",date,".png",sep=""), plot = final_patch,
              width = 8, height = 10, dpi = 300)
       
     }  
