@@ -55,11 +55,11 @@ package.check <- lapply(
       #subset metadata
       df_metadata <- auscpr_rawfile %>% 
         select(all_of(auscpr_meta)) %>% 
-        rename(c("sample_id" = "Sample_ID", "latitude" = "Latitude", "longitude" = "Longitude"))
+        rename(c("sample_id" = "Sample_ID", "latitude" = "Latitude", "longitude" = "Longitude", "sampleTime_UTC" = "SampleTime_UTC"))
       
       #save metadata file
       metadata_filename <- "cpr_auscpr_metadata.csv"
-      write_csv(df_metadata, paste0("output/CPR/",metadata_filename))
+      write_csv(df_metadata, paste0("data_input/CPR/",metadata_filename))
       print(paste0("Metadata dataframe saved: ", metadata_filename))
       
       df_zoop <- auscpr_rawfile %>% 
@@ -68,7 +68,7 @@ package.check <- lapply(
         rename("sample_id" = "Sample_ID")
       
       #load taxon list
-      auscpr_taxonlist <- read_csv("data_input/CPR/CPR_raw_data/auscpr_taxonlist.csv")
+      auscpr_taxonlist <- read_csv("data_input/CPR/CPR_raw_data/auscpr_taxonlist.csv", show_col_types = F)
       count_recognizedAphiaID <- sum(names(df_zoop) %in% auscpr_taxonlist$taxon_auscpr, na.rm = T)
       print(paste0("Taxon with AphiaID: ", count_recognizedAphiaID, " out of ", (length(names(df_zoop)) - 1)))
       
@@ -102,8 +102,8 @@ package.check <- lapply(
       
       #save abundance dataframe
       abundance_dataframe_filename <- "cpr_auscpr_abundance.csv"
-      write_csv(abundance_dataframe, paste0("output/CPR/",abundance_dataframe_filename))
-      print(paste0("Abundance dataframe saved: ", abundance_dataframe_filename))
+      write_csv(abundance_dataframe, paste0("data_input/CPR/",abundance_dataframe_filename))
+      print(paste0("Abundance dataframe saved: data_input/CPR/", abundance_dataframe_filename))
       
     }
     
@@ -120,11 +120,12 @@ package.check <- lapply(
       #subset metadata
       df_metadata <- socpr_rawfile %>% 
         select(all_of(socpr_meta)) %>% 
+        mutate(sampleTime_UTC = as.POSIXct(paste(Date, Time, sep="T"), format = "%d-%b-%YT%H:%M:%S", tz = "UTC")) %>% 
         rename(c("latitude" = "Latitude", "longitude" = "Longitude"))
       
       #save metadata file
       metadata_filename <- "cpr_socpr_metadata.csv"
-      write_csv(df_metadata, paste0("output/CPR/",metadata_filename))
+      write_csv(df_metadata, paste0("data_input/CPR/",metadata_filename))
       print(paste0("Metadata dataframe saved: ", metadata_filename))
       
       df_zoop <- socpr_rawfile %>% 
@@ -132,7 +133,7 @@ package.check <- lapply(
         select(-c("Total abundance","Phytoplankton_Colour_Index","Fluorescence","Salinity","Water_Temperature","Photosynthetically_Active_Radiation")) 
       
       #load taxon list
-      socpr_taxonlist <- read_csv("data_input/CPR/CPR_raw_data/socpr_taxonlist.csv")
+      socpr_taxonlist <- read_csv("data_input/CPR/CPR_raw_data/socpr_taxonlist.csv", show_col_types = F)
       
       #remove unidentified / general taxa
       unidentified_taxa <- c("Egg indet","Egg mass","Nauplius indet") #socpr-specific list
@@ -167,16 +168,16 @@ package.check <- lapply(
       
       #save abundance dataframe
       abundance_dataframe_filename <- "cpr_socpr_abundance.csv"
-      write_csv(abundance_dataframe, paste0("output/CPR/",abundance_dataframe_filename))
-      print(paste0("Abundance dataframe saved: ", abundance_dataframe_filename))
+      write_csv(abundance_dataframe, paste0("data_input/CPR/",abundance_dataframe_filename))
+      print(paste0("Abundance dataframe saved: data_input/CPR/", abundance_dataframe_filename))
     }
     
   #pre-process MBA data for North Atlantic and North Pacific CPR Surveys
     preprocess_mba_cpr <- function(mbacpr_rawfile){
       
       mbacpr_rawfile <- mbacpr_rawfile %>% 
-        mutate(sampleTime_utc = as.POSIXct(midpoint_date_gmt, format = "%Y-%m-%dT%H:%M:%SZ", tz = "UTC"),.after = "sample_id") 
-        
+        mutate(sampleTime_UTC = as.POSIXct(midpoint_date_gmt, format = "%Y-%m-%dT%H:%M:%SZ", tz = "UTC"),.after = "sample_id") %>% 
+        filter(sampleTime_UTC >= "1997-09-01")
       #to remove taxa for avoidance of double counting (Richardson et al., 2006)
       
       #to separate mba data into north pacific and north atlantic data
@@ -193,14 +194,14 @@ package.check <- lapply(
         mba_natlantic <- mba_natlantic %>% 
           filter(!sample_id %in% c("2ALT-1","2ALT-5","3ALT-2","3ALT-5"))
         
-      mba_meta <- c("survey","sample_id","midpoint_date_gmt","sampleTime_utc","latitude","longitude","chlorophyll_index")
+      mba_meta <- c("survey","sample_id","midpoint_date_gmt","sampleTime_UTC","latitude","longitude","chlorophyll_index")
       #get metadata
       mba_npacific_metadata <- mba_npacific %>% 
         select(all_of(mba_meta)) 
       
         #save metadata file
         npacific_metadata_filename <- "cpr_npacific_metadata.csv"
-        write_csv(mba_npacific_metadata, paste0("output/CPR/",npacific_metadata_filename))
+        write_csv(mba_npacific_metadata, paste0("data_input/CPR/",npacific_metadata_filename))
         print(paste0("Metadata dataframe saved: ", npacific_metadata_filename))
       
       mba_natlantic_metadata <- mba_natlantic %>% 
@@ -208,19 +209,21 @@ package.check <- lapply(
         
         #save metadata file
         natlantic_metadata_filename <- "cpr_natlantic_metadata.csv"
-        write_csv(mba_natlantic_metadata, paste0("output/CPR/",natlantic_metadata_filename))
+        write_csv(mba_natlantic_metadata, paste0("data_input/CPR/",natlantic_metadata_filename))
         print(paste0("Metadata dataframe saved: ", natlantic_metadata_filename))
       
       survey <- c("npacific","natlantic")
+                  
       for(i in 1:2){
         if(survey[i] == "natlantic"){
           df_zoop <- mba_natlantic %>% select(c("sample_id",!all_of(mba_meta)))
         }else if(survey[i] == "npacific"){
           df_zoop <- mba_npacific %>% select(c("sample_id",!all_of(mba_meta)))
         }else{ stop("Error in reading dataframe of zooplankton abundance")}
-    
+        
+        print(paste0("CPR survey in-process: ",survey[i]))
         #load taxon list
-        mba_taxonlist <- read_csv("data_input/CPR/CPR_raw_data/mba_cpr_taxonlist.csv")
+        mba_taxonlist <- read_csv("data_input/CPR/CPR_raw_data/mba_cpr_taxonlist.csv", show_col_types = F)
         
         #remove unidentified / general taxa 
         unidentified_taxa <- c("Egg indet","Egg mass","Nauplius indet") 
@@ -241,14 +244,26 @@ package.check <- lapply(
         #to rename based on the match    
         names(df_withmatch)[match(names(df_withmatch),mba_taxonlist$taxa_name)] <- mba_taxonlist$aphia_id
         
-        #return "sample_id" column
-        abundance_dataframe <- df_withmatch %>% 
-          add_column("sample_id" = df_noUnid$sample_id, .before = 1, .name_repair = "minimal") 
+        # #return "sample_id" column
+        # abundance_dataframe <- df_withmatch %>% 
+        #   add_column("sample_id" = df_noUnid$sample_id, .before = 1, .name_repair = "minimal") 
           
+        #combine columns of the same name
+        mbacpr_long <- df_withmatch %>%  
+          add_column("sample_id" = df_noUnid$sample_id, .name_repair = "minimal") %>% #return sample_id column
+          pivot_longer(cols = !sample_id, names_to = "AphiaID", values_to = "value")
+        
+        #sum up abundance per taxon
+        DF_sum <- mbacpr_long %>% group_by(sample_id, AphiaID) %>% summarize(Total=sum(value))
+        
+        #revert to format of having AphiaID as columns
+        DF_reverted <- DF_sum %>% pivot_wider(names_from = "AphiaID",values_from="Total")
+        abundance_dataframe <- DF_reverted %>% ungroup()
+        
         #save abundance dataframe
         abundance_dataframe_filename <- paste0("cpr_",survey[i],"_abundance.csv")
-        write_csv(abundance_dataframe, paste0("output/CPR/",abundance_dataframe_filename))
-        print(paste0("Abundance dataframe saved: ", abundance_dataframe_filename))
+        write_csv(abundance_dataframe, paste0("data_input/CPR/",abundance_dataframe_filename))
+        print(paste0("Abundance dataframe saved: data_input/CPR/", abundance_dataframe_filename))
         
       }
     } 
@@ -410,7 +425,7 @@ package.check <- lapply(
 map_globalcpr <- function(file.list){
   #extract metadata  
   filenames <- basename(file.list)
-  cpr <- data.frame(matrix(ncol=5,nrow=0, dimnames=list(NULL, c("survey", "sample_id", "latitude", "longitude", "sampleTime_utc"))))
+  cpr <- data.frame(matrix(ncol=5,nrow=0, dimnames=list(NULL, c("survey", "sample_id", "latitude", "longitude", "sampleTime_UTC"))))
   cpr[,1:2] <- lapply(cpr[,1:2], as.character) # survey and sample id
   cpr[,3:4] <- lapply(cpr[,3:4], as.double) # latitude and longitude
   cpr[,5] <- as.POSIXct(cpr[,5]) #sample time UTC
@@ -423,7 +438,7 @@ map_globalcpr <- function(file.list){
     
     cpr_metadata <- read_csv(file.list[i]) %>% 
       mutate(survey = file_survey) %>% 
-      select("survey","sample_id","latitude","longitude","sampleTime_utc")
+      select("survey","sample_id","latitude","longitude","sampleTime_UTC")
     
     print(paste("File No.", i, sep=""))
     #integrate into a global cpr
@@ -455,7 +470,7 @@ map_globalcpr <- function(file.list){
                 text.size = 1.2, title.size = 1.4)
     
     #to export plot
-    tmap_save(globalcpr_map, filename=paste("Output/map/Global/Global-CPR-map_",date,".png",sep=""),
+    tmap_save(globalcpr_map, filename=paste0("output/plots/Global-CPR-map_",date,".png"),
               width = 400,
               height = 200,
               units = "mm",

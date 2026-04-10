@@ -48,42 +48,51 @@ package.check <- lapply(
   # #ens_snapshot_future <- ens_selected[,,,86] 
   
   #to plot ensemble snapshot function
-  plot_esm_snapshot <- function(ensemble_snapshot){
+  plot_esm_snapshot <- function(ens){
+    ensemble <- read_stars(ens)
+      ens_name <- str_extract(basename(ens), ".*(?=\\_r1i1p1f1_RegriddedAnnual_20150101-21001231.nc)")
     
+    #convert chlos (kg/m^3) to chla_sqrt (sqrt (mg/m^3) )
     chla_sqrt <- function(x){ sqrt(x * 1000000) }
-    esm_converted <- st_apply(ensemble_snapshot,1:2, chla_sqrt, rename = TRUE)
+    ens_converted <- st_apply(ensemble,1:3, chla_sqrt, rename = TRUE)
     
-    #convert star to df
-    esm_df <- as.data.frame(esm_converted, xy = TRUE, na.rm = FALSE) #xy coordinates and kept 'NA'
-    #simplify esm_df
-    esm_df <- esm_df %>% select(c(chla_sqrt,x,y))
-    ##
-
-    esm_st <- st_as_stars(esm_df, dims = c("x","y"))
-
-    TG_projection <- tm_shape(esm_st) +
-      tm_raster(
-        col = "chla_sqrt",      # The name of your data column
-        col.scale = tm_scale_continuous(values = c("white", "darkgreen")),
-        col.legend = tm_legend("Chlos ensemble ssp585 2015",
-                               orientation = "landscape", 
-                               frame = FALSE,
-                               position = tm_pos_out("center", "bottom"))) +
-      tm_layout(legend.outside = TRUE, bg.color = "black") 
+    ens_snapshot_baseline <- ens_converted[,,,1] #2015:1 :: 2100:86
+    ens_snapshot_future <- ens_converted[,,,86]
     
-    tmap_save(TG_projection, filename=paste("Output/map/projections/",ens_name,"_",date,".png",sep=""))
-    
+    ens_list <- list(ens_snapshot_baseline, ens_snapshot_future)
+    names(ens_list) <- c("baseline_2015","future_2100")
+    for(i in 1:length(ens_list)){
+      #ens_st <- st_as_stars(ens_list[i], dims = c("x","y"))
+      #to plot
+      TG_projection <- tm_shape(ens_list[[i]]) +
+        tm_raster(
+          col = "chla_sqrt",      # The name of your data column
+          col.scale = tm_scale_continuous(values = c("white", "darkgreen")),
+          col.legend = tm_legend(paste0("Chl os ensemble ",names(ens_list[i])),
+                                 orientation = "landscape", 
+                                 frame = FALSE,
+                                 position = tm_pos_out("center", "bottom"))) +
+        tm_layout(legend.outside = TRUE, bg.color = "black") 
+      #to save plot
+      tmap_save(TG_projection, filename=paste0("output/plots/",ens_name,"_",names(ens_list[i]),"_",date,".png"))
+    }
   }
 
   #plot_esm_snapshot(ens_snapshot_baseline)
   
-##02 to plot ensemble delta function (non-working function)
-  plot_esm_delta <- function(esm){
+##02 to plot ensemble delta function 
+  plot_esm_delta <- function(ens){
+    #read in ensemble as stars object
+    ens_selected <- read_stars(ens, quiet = TRUE, proxy = TRUE) %>% setNames("chlos")
+    ens_name <- str_extract(basename(ens), ".*(?=\\_r1i1p1f1_RegriddedAnnual_20150101-21001231.nc)")
+    print(paste0("SSP scenario in process: ",ens_name))
+    
+    str_extract(basename(ens), "_ssp\\d{3}_")
     
     #convert chlos (kg/m^3) to chla_sqrt (sqrt (mg/m^3) )
     chla_sqrt <- function(x){ sqrt(x * 1000000) }
-    esm_converted <- st_apply(esm,1:2, chla_sqrt, rename = TRUE)
-
+    esm_converted <- st_apply(ens_selected,1:3, chla_sqrt, rename = TRUE)
+    #separate baseline (2015) and future (2100) snapshot of chlos projections
     ens_snapshot_baseline <- esm_converted[,,,1] #2015:1 :: 2100:86
     ens_snapshot_future <- esm_converted[,,,86]
     
@@ -93,30 +102,31 @@ package.check <- lapply(
     ens_future_df <- as.data.frame(ens_snapshot_future, xy = TRUE, na.rm = T) %>% rename("chla_sqrt_future" = "chla_sqrt")
     #xy coordinates and kept 'NA'
 
-    #simplify esm_df
-    ens_df <- ens_baseline_df %>% 
-      left_join(ens_future_df, by = c("x","y")) %>% 
-      mutate(chla_sqrt_delta = ((chla_sqrt_future - chla_sqrt_baseline)/chla_sqrt_baseline) * 100)
+    #compute for delta
+    ens_delta_summary <- ens_baseline_df %>% select("chla_sqrt_baseline", "x", "y") %>% 
+      left_join(ens_future_df %>% select("chla_sqrt_future", "x", "y"), by = c("x","y")) %>% 
+      mutate("chla_delta" = (((chla_sqrt_future - chla_sqrt_baseline)/chla_sqrt_baseline)*100))
       
     #save
-    saveRDS(ens_df, file=paste("Output/data/projections/chlos_delta_",date,".RData",sep=""))
-    print(paste("Output/data/projections/chlos_delta_",date,".RData",sep=""))
+    saveRDS(ens_delta_summary, file=paste0("output/projections/Delta_",ens_name,"_",date,".RData"))
+    print(paste0("File (computed delta) saved: output/projections/Delta_",ens_name,"_",date,".RData"))
 
     #to plot
     #convert to stars
-    st_projections <- st_as_stars(ens_df, dims = c("x","y"))
-  
+    st_projections <- st_as_stars(ens_delta_summary, dims = c("x","y"))
+    
+    #print(summary(is.na(st_projections$chla_sqrt_delta)))
     TG_projection <- tm_shape(st_projections) +
       tm_raster(
-        col = "chla_sqrt_delta",      # The name of your data column
-        col.scale = tm_scale_continuous(values = c("blue", "white","red")),
+        col = "chla_delta",      # The name of your data column
+        col.scale = tm_scale_continuous(midpoint = 0, values = c("blue", "white","red")),
         col.legend = tm_legend(paste("Change in surface chlorophyll under climate change (SSP585)",sep=""),
                                orientation = "landscape", 
                                frame = FALSE)) +
       tm_layout(legend.outside = TRUE, bg.color = "black", text.size = 36) 
     
-    tmap_save(TG_projection, filename=paste("Output/map/projections/chlos_delta_",date,".png",sep=""))
-    
+    tmap_save(TG_projection, filename=paste0("output/plots/chlos_delta_",date,".png"))
+    print(paste0("Plot saved: output/plots/chlos_delta_",date,".png"))
   }
   
   #plot_esm_delta(ens_selected)
@@ -166,6 +176,18 @@ package.check <- lapply(
       print("Future (yr 2100)")
       print(ens_future_summary) 
       
+      ens_delta_summary <- ens_baseline_df %>% select("chla_sqrt_baseline", "x", "y") %>% 
+        left_join(ens_future_df %>% select("chla_sqrt_future", "x", "y"), by = c("x","y")) %>% 
+        mutate("chla_delta" = (((chla_sqrt_future - chla_sqrt_baseline)/chla_sqrt_baseline))) %>% 
+        summarise(mean = mean(chla_delta, na.rm =T), 
+                  median = median(chla_delta, na.rm =T), 
+                  Q1 = quantile(chla_delta, 0.25, na.rm =T), 
+                  Q3 = quantile(chla_delta, 0.75, na.rm =T), 
+                  min = min(chla_delta, na.rm = T),
+                  max = max(chla_delta, na.rm = T))
+        
+      print("Change by 2100 relative to 2015 (reported in proportional change)")
+      print(ens_delta_summary)
     }
   }
   

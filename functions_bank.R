@@ -17,7 +17,9 @@
                 "sp",
                 "sf",
                 "viridis",
-                "gridGraphics")
+                "gridGraphics",
+                "rnaturalearth",
+                "tmap")
   
   # Function to download the packages if necessary. Otherwise, these are loaded.
   package.check <- lapply(
@@ -32,81 +34,383 @@
       }
     }
   )
-
-#### 1_generate_traits ####
+  
+########################################### Pre-process CPR files ###############################################
+  
+  #0.1 pre-processing CPR raw files 
+  #pre-process Australian CPR survey
+  #load auscpr raw csv file (based on latest available df as of 27 March 2026)
+  
+  preprocess_auscpr <- function(auscpr_rawfile){
+    auscpr_rawfile <- auscpr_rawfile %>% 
+      mutate(survey = "Australian CPR") 
+    #list metadata content
+    auscpr_meta <- c("survey","TripCode","Sample_ID","Region","Latitude","Longitude","SampleTime_UTC","SampleTime_Local","Year_Local","Month_Local","Day_Local","Time_Local24hr","SampleVolume_m3")
+    #subset metadata
+    df_metadata <- auscpr_rawfile %>% 
+      select(all_of(auscpr_meta)) %>% 
+      rename(c("sample_id" = "Sample_ID", "latitude" = "Latitude", "longitude" = "Longitude", "sampleTime_UTC" = "SampleTime_UTC"))
+    
+    #save metadata file
+    metadata_filename <- "cpr_auscpr_metadata.csv"
+    write_csv(df_metadata, paste0("data_input/CPR/",metadata_filename))
+    print(paste0("Metadata dataframe saved: ", metadata_filename))
+    
+    df_zoop <- auscpr_rawfile %>% 
+      select(c("Sample_ID",!all_of(auscpr_meta))) %>% 
+      select(-c("SatSST_degC","PCI","SatChlaSurf_mgm3","BiomassIndex_mgm3")) %>% 
+      rename("sample_id" = "Sample_ID")
+    
+    #load taxon list
+    auscpr_taxonlist <- read_csv("data_input/CPR/CPR_raw_data/auscpr_taxonlist.csv", show_col_types = F)
+    count_recognizedAphiaID <- sum(names(df_zoop) %in% auscpr_taxonlist$taxon_auscpr, na.rm = T)
+    print(paste0("Taxon with AphiaID: ", count_recognizedAphiaID, " out of ", (length(names(df_zoop)) - 1)))
+    
+    #remove unidentified / general taxa
+    unidentified_taxa <- c("Egg","Egg mass","Fish egg","Fish j","Fish larvae","Fish scales","Nauplii zooplankton","Trochophore larvae","Unid invert larvae") #auscpr-specific list
+    df_noUnid <- df_zoop %>% select(!any_of(unidentified_taxa)) 
+    
+    #rename columns from taxonomic name to AphiaID 
+    #prior step: remove unidentified / general taxa from taxon list and keep only taxon presently identified in auscpr abundance raw file
+    auscpr_taxonlist <- auscpr_taxonlist %>% 
+      filter(., !(taxon_auscpr %in% unidentified_taxa)) %>% 
+      filter(., (taxon_auscpr %in% names(df_noUnid)))
+    #to select columns with matched AphiaID
+    df_withmatch <- df_noUnid %>% 
+      select(-c("sample_id")) %>% 
+      select(match(names(df_noUnid), auscpr_taxonlist$taxon_auscpr, nomatch = 0))
+    #to rename based on the match
+    names(df_withmatch)[match(names(df_withmatch),auscpr_taxonlist$taxon_auscpr)] <- auscpr_taxonlist$aphiaID
+    
+    #combine columns of the same name
+    auscpr_long <- df_withmatch %>%
+      add_column("sample_id" = df_noUnid$sample_id, .name_repair = "minimal") %>%
+      pivot_longer(cols = !sample_id, names_to = "AphiaID", values_to = "value")
+    
+    #sum up abundance per taxon
+    DF_sum <- auscpr_long %>% group_by(sample_id, AphiaID) %>% summarize(Total=sum(value))
+    
+    #revert to format of having AphiaID as columns
+    DF_reverted <- DF_sum %>% pivot_wider(names_from = "AphiaID",values_from="Total")
+    abundance_dataframe <- DF_reverted %>% ungroup()
+    
+    #save abundance dataframe
+    abundance_dataframe_filename <- "cpr_auscpr_abundance.csv"
+    write_csv(abundance_dataframe, paste0("data_input/CPR/",abundance_dataframe_filename))
+    print(paste0("Abundance dataframe saved: data_input/CPR/", abundance_dataframe_filename))
+    
+  }
+  
+  #0.2 pre-process Southern Ocean CPR survey
+  preprocess_socpr <- function(socpr_rawfile){
+    #assign sample_id
+    socpr_rawfile <- socpr_rawfile %>% 
+      mutate(survey = "Southern Ocean CPR", sample_id = paste("SOCPR", cur_group_rows(), sep = "")) %>% 
+      relocate(sample_id, .before=Tow_Number) #primary key = Sample_ID 
+    
+    
+    #list metadata content
+    socpr_meta <- c("survey","sample_id","Tow_Number","Ship_Code","Time","Date","Month","Year","Season","Latitude","Longitude","Segment_No.","Segment_Length")
+    #subset metadata
+    df_metadata <- socpr_rawfile %>% 
+      select(all_of(socpr_meta)) %>% 
+      mutate(sampleTime_UTC = as.POSIXct(paste(Date, Time, sep="T"), format = "%d-%b-%YT%H:%M:%S", tz = "UTC")) %>% 
+      rename(c("latitude" = "Latitude", "longitude" = "Longitude"))
+    
+    #save metadata file
+    metadata_filename <- "cpr_socpr_metadata.csv"
+    write_csv(df_metadata, paste0("data_input/CPR/",metadata_filename))
+    print(paste0("Metadata dataframe saved: ", metadata_filename))
+    
+    df_zoop <- socpr_rawfile %>% 
+      select(c("sample_id",!all_of(socpr_meta))) %>% 
+      select(-c("Total abundance","Phytoplankton_Colour_Index","Fluorescence","Salinity","Water_Temperature","Photosynthetically_Active_Radiation")) 
+    
+    #load taxon list
+    socpr_taxonlist <- read_csv("data_input/CPR/CPR_raw_data/socpr_taxonlist.csv", show_col_types = F)
+    
+    #remove unidentified / general taxa
+    unidentified_taxa <- c("Egg indet","Egg mass","Nauplius indet") #socpr-specific list
+    df_noUnid <- df_zoop %>% select(!any_of(unidentified_taxa))
+    
+    #report number of taxon with recognized aphiaID
+    count_recognizedAphiaID <- sum(names(df_noUnid) %in% socpr_taxonlist$taxon, na.rm = T)
+    print(paste0("Taxon with AphiaID: ", count_recognizedAphiaID, " out of ", (length(names(df_noUnid)) - 1)))
+    
+    #rename columns from taxonomic name to AphiaID 
+    #prior step: remove unidentified / general taxa from taxon list 
+    socpr_taxonlist <- socpr_taxonlist %>% 
+      filter(., !(taxon %in% unidentified_taxa)) %>% 
+      filter(., (taxon %in% names(df_noUnid)))
+    ##to select columns with matched AphiaID
+    df_withmatch <- df_noUnid %>% 
+      select(match(socpr_taxonlist$taxon,names(df_noUnid)))
+    #to rename based on the match    
+    names(df_withmatch)[match(names(df_withmatch),socpr_taxonlist$taxon)] <- socpr_taxonlist$aphiaID
+    
+    #combine columns of the same name
+    socpr_long <- df_withmatch %>%  
+      add_column("sample_id" = df_noUnid$sample_id, .name_repair = "minimal") %>% #return sample_id column
+      pivot_longer(cols = !sample_id, names_to = "AphiaID", values_to = "value")
+    
+    #sum up abundance per taxon
+    DF_sum <- socpr_long %>% group_by(sample_id, AphiaID) %>% summarize(Total=sum(value))
+    
+    #revert to format of having AphiaID as columns
+    DF_reverted <- DF_sum %>% pivot_wider(names_from = "AphiaID",values_from="Total")
+    abundance_dataframe <- DF_reverted %>% ungroup()
+    
+    #save abundance dataframe
+    abundance_dataframe_filename <- "cpr_socpr_abundance.csv"
+    write_csv(abundance_dataframe, paste0("data_input/CPR/",abundance_dataframe_filename))
+    print(paste0("Abundance dataframe saved: data_input/CPR/", abundance_dataframe_filename))
+  }
+  
+  #0.3 pre-process MBA data for North Atlantic and North Pacific CPR Surveys
+  preprocess_mba_cpr <- function(mbacpr_rawfile){
+    
+    mbacpr_rawfile <- mbacpr_rawfile %>% 
+      mutate(sampleTime_UTC = as.POSIXct(midpoint_date_gmt, format = "%Y-%m-%dT%H:%M:%SZ", tz = "UTC"),.after = "sample_id") %>% 
+      filter(sampleTime_UTC >= "1997-09-01")
+    #to remove taxa for avoidance of double counting (Richardson et al., 2006)
+    
+    #to separate mba data into north pacific and north atlantic data
+    #identify cpr belonging to North Atlantic and North Pacific CPR
+    mba_npacific <- mbacpr_rawfile %>% 
+      filter(longitude >= 100 | longitude <= -100) %>%
+      mutate(survey = "North Pacific CPR") 
+    
+    mba_natlantic <- mbacpr_rawfile %>% 
+      filter(longitude < 100 & longitude > -100) %>% 
+      mutate(survey = "Atlantic CPR") 
+    
+    #North Atlantic CPR: remove freshwater (Lake Tanganyika)
+    mba_natlantic <- mba_natlantic %>% 
+      filter(!sample_id %in% c("2ALT-1","2ALT-5","3ALT-2","3ALT-5"))
+    
+    mba_meta <- c("survey","sample_id","midpoint_date_gmt","sampleTime_UTC","latitude","longitude","chlorophyll_index")
+    #get metadata
+    mba_npacific_metadata <- mba_npacific %>% 
+      select(all_of(mba_meta)) 
+    
+    #save metadata file
+    npacific_metadata_filename <- "cpr_npacific_metadata.csv"
+    write_csv(mba_npacific_metadata, paste0("data_input/CPR/",npacific_metadata_filename))
+    print(paste0("Metadata dataframe saved: ", npacific_metadata_filename))
+    
+    mba_natlantic_metadata <- mba_natlantic %>% 
+      select(all_of(mba_meta)) 
+    
+    #save metadata file
+    natlantic_metadata_filename <- "cpr_natlantic_metadata.csv"
+    write_csv(mba_natlantic_metadata, paste0("data_input/CPR/",natlantic_metadata_filename))
+    print(paste0("Metadata dataframe saved: ", natlantic_metadata_filename))
+    
+    survey <- c("npacific","natlantic")
+    
+    for(i in 1:2){
+      if(survey[i] == "natlantic"){
+        df_zoop <- mba_natlantic %>% select(c("sample_id",!all_of(mba_meta)))
+      }else if(survey[i] == "npacific"){
+        df_zoop <- mba_npacific %>% select(c("sample_id",!all_of(mba_meta)))
+      }else{ stop("Error in reading dataframe of zooplankton abundance")}
+      
+      print(paste0("CPR survey in-process: ",survey[i]))
+      #load taxon list
+      mba_taxonlist <- read_csv("data_input/CPR/CPR_raw_data/mba_cpr_taxonlist.csv", show_col_types = F)
+      
+      #remove unidentified / general taxa 
+      unidentified_taxa <- c("Egg indet","Egg mass","Nauplius indet") 
+      df_noUnid <- df_zoop %>% select(!any_of(unidentified_taxa))
+      
+      #report number of taxon with recognized aphiaID
+      count_recognizedAphiaID <- sum(names(df_noUnid) %in% mba_taxonlist$taxa_name, na.rm = T)
+      print(paste0("Taxon with AphiaID: ", count_recognizedAphiaID, " out of ", (length(names(df_noUnid)) - 1))) #account for column "sample_id"
+      
+      #rename columns from taxonomic name to AphiaID 
+      #prior step: remove unidentified / general taxa from taxon list 
+      mba_taxonlist <- mba_taxonlist %>% 
+        filter(., !(taxa_name %in% unidentified_taxa)) %>% 
+        filter(., (taxa_name %in% names(df_noUnid)))
+      ##to select columns with matched AphiaID
+      df_withmatch <- df_noUnid %>% 
+        select(match(mba_taxonlist$taxa_name,names(df_noUnid)))
+      #to rename based on the match    
+      names(df_withmatch)[match(names(df_withmatch),mba_taxonlist$taxa_name)] <- mba_taxonlist$aphia_id
+      
+      # #return "sample_id" column
+      # abundance_dataframe <- df_withmatch %>% 
+      #   add_column("sample_id" = df_noUnid$sample_id, .before = 1, .name_repair = "minimal") 
+      
+      #combine columns of the same name
+      mbacpr_long <- df_withmatch %>%  
+        add_column("sample_id" = df_noUnid$sample_id, .name_repair = "minimal") %>% #return sample_id column
+        pivot_longer(cols = !sample_id, names_to = "AphiaID", values_to = "value")
+      
+      #sum up abundance per taxon
+      DF_sum <- mbacpr_long %>% group_by(sample_id, AphiaID) %>% summarize(Total=sum(value))
+      
+      #revert to format of having AphiaID as columns
+      DF_reverted <- DF_sum %>% pivot_wider(names_from = "AphiaID",values_from="Total")
+      abundance_dataframe <- DF_reverted %>% ungroup()
+      
+      #save abundance dataframe
+      abundance_dataframe_filename <- paste0("cpr_",survey[i],"_abundance.csv")
+      write_csv(abundance_dataframe, paste0("data_input/CPR/",abundance_dataframe_filename))
+      print(paste0("Abundance dataframe saved: data_input/CPR/", abundance_dataframe_filename))
+      
+    }
+  } 
+  
+  #0.4 to map the global CPR
+  map_globalcpr <- function(file.list){
+    #extract metadata  
+    filenames <- basename(file.list)
+    cpr <- data.frame(matrix(ncol=5,nrow=0, dimnames=list(NULL, c("survey", "sample_id", "latitude", "longitude", "sampleTime_UTC"))))
+    cpr[,1:2] <- lapply(cpr[,1:2], as.character) # survey and sample id
+    cpr[,3:4] <- lapply(cpr[,3:4], as.double) # latitude and longitude
+    cpr[,5] <- as.POSIXct(cpr[,5]) #sample time UTC
+    
+    
+    #loop through each survey
+    for(i in 1:length(filenames)){
+      file_survey <- str_extract(filenames[i], "(?<=_)[^_]+")
+      print(paste("Survey: ",file_survey, sep=""))
+      
+      cpr_metadata <- read_csv(file.list[i], show_col_types = F) %>% 
+        mutate(survey = file_survey) %>% 
+        select("survey","sample_id","latitude","longitude","sampleTime_UTC")
+      
+      print(paste("File No.", i, sep=""))
+      #integrate into a global cpr
+      cpr <- cpr %>% 
+        rows_insert(cpr_metadata, by = "survey")
+    }
+    
+    #identify coordinates 
+    cpr <- cpr %>% 
+      st_as_sf(coords = c("longitude", "latitude"), crs = 4326) %>% 
+      rename("Survey" = "survey") 
+    
+    #set projection 
+    world_projection <- '+proj=eqearth +lon_0=0 +datum=WGS84 +units=m +no_defs'
+    #get world coastline
+    world <- ne_coastline(scale = "medium")
+    
+    #to plot
+    globalcpr_map <- tm_shape(world) +
+      tm_polygons(col = "white") +
+      tm_shape(cpr, crs = world_projection, raster.warp = TRUE) +
+      tm_dots(col = "Survey", fill_alpha = 0.5, size = 0.3,
+              labels = c("Australian CPR", "Atlantic CPR", "North Pacific CPR", "SCAR Southern Ocean CPR")) + 
+      tm_graticules(alpha = 0.5, 
+                    x = c(-180, -150, -120, -90, -60, -30, 0, 30, 60, 90, 120, 150, 180), 
+                    y = c(-90, -60, -30, 0, 30, 60, 90), 
+                    labels.size = 1) +
+      tm_legend(position = c("left", "center"),
+                text.size = 1.2, title.size = 1.4, na.show = F)
+    
+    #to export plot
+    tmap_save(globalcpr_map, filename=paste0("output/plots/Global-CPR-map_",date,".png"),
+              width = 400,
+              height = 200,
+              units = "mm",
+              dpi = 400)
+  }
+  
+########################################### 1_generate_traits ###################################################
+  
   #1.1 Integrate Pata & Hunt (2023) assigned trait value to species list
   import_TG.PataHunt <- function(species.list){
-    # Read the trait dataset
+    # Read the trait dataset subset from Pata & Hunt (2023) trait table
     zoop.traits <- read_csv("data_input/traits/TG_trait_subset_03-06-2025.csv")
-    copepod.traits <- read_csv("data_input/traits/TG_copepods_combined_03-06-2025.csv")
-    
+
     # Select the relevant columns
     zoop.traits <- zoop.traits %>% 
       select(taxonID, scientificName, class, order, family, genus, traitValue) %>% 
       distinct() 
     
-    copepod.traits <- copepod.traits %>% 
-      select(taxonID, scientificName, class, order, family, genus, traitValue) %>% 
-      rename(copepod_trait = traitValue) %>% 
-      distinct()
-    
-    summary(as.factor(species.list$traitValue))
-    summary(as.factor(copepod.traits$copepod_trait))
-    summary(as.factor(zoop.traits$traitValue))
-    
     # Join trait with the species list
     species.list <- species.list %>% 
       left_join(zoop.traits, by = c("taxonID", "scientificName", "class", "order", "family", "genus")) %>% 
-      left_join(copepod.traits, by = c("taxonID", "scientificName", "class", "order", "family", "genus")) %>% 
-      #rename column of traitValue to "Pata&Hunt.TG"
       mutate(traitValue = ifelse(is.na(traitValue), "not_determined", traitValue))
     
     return(species.list)
   }
   
   #1.2 Assign 'gelatinous filter-feeders' group
-  assign_filter_or_not <- function(zoop_list){
+  assign_filter_or_not <- function(species.list){
     ff.order <- c("Pyrosomida","Salpida","Dolioida","Copelata","Aplousobranchia","Phlebobranchia","Stolidobranchia")
-    zoop_list %>% 
+    species.list <- species.list %>% 
       mutate(filter_or_not = case_when(order %in% ff.order ~ "1",
                                        .default = "0")) %>% 
-      relocate(filter_or_not, .after = "traitValue")
+      relocate("filter_or_not", .after = "traitValue")
   }
   
-  #1.3 check for duplicates and save finalized trait table
-  detect_duplicateAssignedTrait <- function(species_list){
-    
+  #1.3 Adapt previously reviewed assigned trophic groups
+  adapt_reviewedTraitTable <- function(species.list){
     #check which have duplicated 'traitValues'
-    if(anyDuplicated(species.list$aphiaID) > 0){
+      if(anyDuplicated(species.list$aphiaID) > 0){
+      cat("Need for review!\nDetected duplicate in assigned trait values for: ")
+      print(unique(species.list$scientificName[duplicated(species.list$aphiaID)]))
+      }else if(anyDuplicated(species.list$aphiaID) == 0){
+      cat("Looks good!\nNo detected duplicates")
+      }else{ stop("Error in duplicate checking", call. = FALSE)}
+    
+    reviewed_TraitTable <- read_csv(paste0("data_input/traits/fTraitTable.csv"),show_col_types = F)
+    
+    newTraitTable <- species.list %>% 
+      select(c("aphiaID","traitValue")) %>% 
+      group_by(aphiaID) %>% 
+      summarise(traitValue = paste0(traitValue, collapse = ";")) %>% 
+      rename("unreviewed_traitValue" = "traitValue") 
+    
+    reviewed_TraitTable <- reviewed_TraitTable %>% 
+      full_join(newTraitTable, by = c("aphiaID")) %>% 
+      mutate(TG_latest = case_when(!is_empty(TG_latest) ~ TG_latest,
+                                       .default = "unreviewed_traitValue")) %>% 
+      relocate("unreviewed_traitValue", .after = "TG_latest") 
+    
+    write_csv(reviewed_TraitTable, paste0("output/df/traitTable_",date,".csv"))
+    print(paste0("File output: df/traitTable_",date,".csv"))
+  }
+  
+  #fTraitTable <- read_csv("output/df/fTraitTable.csv")
+  
+  #1.4 check for duplicates
+  detect_duplicateAssignedTrait <- function(taxa_list){
+
+    #check which have duplicated 'traitValues'
+    if(anyDuplicated(taxa_list$aphiaID) > 0){
     cat("Need for review!\nDetected duplicate in assigned trait values for: ")
-    print(unique(species.list$scientificName[duplicated(species.list$aphiaID)]))
-    }else if(anyDuplicated(species.list$aphiaID) == 0){
+    print(unique(taxa_list$scientificName[duplicated(taxa_list$aphiaID)]))
+    }else if(anyDuplicated(taxa_list$aphiaID) == 0){
     cat("Looks good!\nNo detected duplicates")
     }else{ stop("Error in duplicate checking", call. = FALSE)}
-    
-    ##Save trait table
-    write_csv(species.list, paste("output/df/TG_trait-table-",date,".csv",sep=""))
-    write_csv(species.list, paste("data_input/traits/TG_trait-table-",date,".csv",sep=""))
-    print(paste0("Trait table saved: TG_trait-table-",date,".csv"))
+
   }
-  
-  #1.4 compare previous and current trait table 
+
+  #1.5 compare previous and current trait table
   compare_traitTables <- function(){
-    oldTraitTable <- read_csv(paste0("data_input/traits/TG_trait-table-08082d025.csv"))
+    reviewed_TraitTable <- read_csv(paste0("data_input/traits/fTraitTable.csv"))
     newTraitTable <- read_csv(paste0("output/df/TG_trait-table-",date,".csv"))
-    
-    comparison_tibble <- oldTraitTable %>% 
-      select(c("aphiaID","scientificName","FG_latest")) %>% 
-      rename("TG_PreviousTraitTable" = "FG_latest") %>% 
-      full_join(newTraitTable %>% select(c("aphiaID","traitValue")), by = c("aphiaID")) %>% 
+
+    comparison_tibble <- reviewed_TraitTable %>%
+      select(c("aphiaID","scientificName","taxon","TG_latest")) %>%
+      rename("TG_previousTraitTable" = "TG_latest") %>%
+      full_join(newTraitTable %>% select(c("aphiaID","taxa_name","traitValue")), by = c("aphiaID")) %>%
       rename("TG_newTraitTable" = "traitValue")
-    
+
     view(comparison_tibble)
+
+    write_csv(comparison_tibble, "output/df/TraitTable_comparison.csv")
+    print(paste0("File output: df/TraitTable_comparison.csv"))
   }
   
   ## See '1_generate_traits' script for full preparation of trait table.
   
-#### 2_extract_chla #### 
+########################################### 2_extract_chla ##################################################
+  
   #2.1 aggregate raster file of OC-CCI (based on 'wrangle-netcdf-imos' script from 2024 UQ MME Lab R Workshop)
   aggregate_ncdf <- function(survey_list, frequency, date) {
     
@@ -200,7 +504,7 @@
       print(paste0("Survey: ",survey_list[i]))
       cpr_coord_file <- file.path(paste("data_input/CPR/cpr_",survey_list[i],"_metadata.csv", sep=""))
       cpr_coords <- read_csv(cpr_coord_file, col_names=T) %>% 
-        dplyr::select(sample_id, latitude, longitude, sampleTime_utc) %>% 
+        dplyr::select(sample_id, latitude, longitude, sampleTime_UTC) %>% 
         st_as_sf(coords = c("longitude", "latitude"), crs = 4326)
       
       #create df template for saving extracted chl-a output 
@@ -215,14 +519,14 @@
         print(paste("file #:",j," out of ", length(rast_list),sep =""))
         print(basename(rast_list[j]))
         #extract
-        chla_ext <- st_extract(chla, cpr_coords, time_column = "sampleTime_utc", interpolate_time = T)
+        chla_ext <- st_extract(chla, cpr_coords, time_column = "sampleTime_UTC", interpolate_time = T)
         
         chla_df <- c(chla_df, chla_ext[1]) #use left-join instead
         
         #chla_df <- chla_df %>% left_join(chla_ext[1], by = c("longitude", "latitude"))
       }
       
-      chla_df <- cbind(chla_df, cpr_coords %>% dplyr::select("sample_id", "sampleTime_utc"))
+      chla_df <- cbind(chla_df, cpr_coords %>% dplyr::select("sample_id", "sampleTime_UTC"))
       saveRDS(chla_df, file=paste("output/chla/",survey_list[i],"/chla_",frequency,"_",date,".rds",sep=""))
       print(paste("Extracted Chl-a Output: ","output/chla/",survey_list[i],"/chla_",frequency,"_",date,".rds",sep=""))
       
@@ -241,7 +545,7 @@
       chla_df$geometry = NULL
       
       chla_df <- chla_df %>%
-        pivot_longer(-c("sample_id", "sampleTime_utc"), values_drop_na = T) %>% 
+        pivot_longer(-c("sample_id", "sampleTime_UTC"), values_drop_na = T) %>% 
         rename(chla_eightday = value)
       
       #extract from monthly (to read output of previous function "extract_chla")
@@ -252,7 +556,7 @@
       
       #remove the rows containing only 'NA'
       chla_df_m <- chla_df_m %>%
-        pivot_longer(-c("sample_id", "sampleTime_utc"), values_drop_na = T) %>% 
+        pivot_longer(-c("sample_id", "sampleTime_UTC"), values_drop_na = T) %>% 
         rename(chla_monthly = value)
       
       #plain chla df
@@ -264,8 +568,8 @@
       chla_merged <- chla %>% 
         left_join(chla_df_m, by="sample_id") %>%
         left_join(chla_df, by="sample_id") %>% 
-        dplyr::select(-c(name.x, name.y, sampleTime_utc.y)) %>%
-        rename(sampleTime_utc = "sampleTime_utc.x") %>% 
+        dplyr::select(-c(name.x, name.y, sampleTime_UTC.y)) %>%
+        rename(sampleTime_UTC = "sampleTime_UTC.x") %>% 
         mutate(chla = ifelse(is.na(chla_eightday), chla_monthly, chla_eightday))
       
       print(paste("Survey: ",survey_list[i],sep=""))
@@ -277,27 +581,26 @@
     }
   }
   
-# 3_generate_completeDF :
+########################################### 3_generate_completeDF ##################################################
   #3.1 Compute for proportions of trophic groups
   compute_proportions_perSurvey <- function(abundance_list){
       #01 get trait list (check version of trait table)
-      traits <- read_csv("data_input/traits/TG_trait-table-08082025.csv", col_names=T, show_col_types = F) %>% 
-        rename(FG_complete = FG_latest)
-      print("Trait table version date: 08082025")
+      traits <- read_csv("data_input/traits/fTraitTable.csv", col_names=T, show_col_types = F) 
+      print("Trait table version date: 08 April 2026")
       
       #02 Subset the aphiaIDs belonging to each taxonomic group and trophic group
         #zooplankton community
         aphia_noNA <- traits %>% 
-          filter(!is.na(FG_complete))
+          filter(!is.na(TG_latest))
       
         aphia_FF <- traits %>% 
-          filter(FG_complete == "filter-feeder")
+          filter(TG_latest == "filter-feeder")
         
         aphia_omni <- traits %>% 
-          filter(FG_complete == "omnivore")
+          filter(TG_latest == "omnivore")
         
         aphia_carni <- traits %>% 
-          filter(FG_complete == "carnivore")
+          filter(TG_latest == "carnivore")
         
         #Copepods 
         aphia_copepods <- traits %>% 
@@ -305,10 +608,10 @@
           filter(!is.na(aphiaID)) 
           
           aphia_cope_omni <- aphia_copepods %>% 
-            filter(FG_complete == "omnivore")
+            filter(TG_latest == "omnivore")
           
           aphia_cope_carni <- aphia_copepods %>% 
-            filter(FG_complete == "carnivore")
+            filter(TG_latest == "carnivore")
         
         aphia_copepods_CalAndCyc <- traits %>% #NOTE: Only Calanoids and Cyclopoids are part of further analysis of copepods
           filter(class =="Copepoda") %>% 
@@ -319,20 +622,20 @@
           filter(order == "Calanoida")
         
           aphia_calanoid_omni <- aphia_calanoids %>% 
-            filter(FG_complete == "omnivore")
+            filter(TG_latest == "omnivore")
           
           aphia_calanoid_carni <- aphia_calanoids %>% 
-            filter(FG_complete == "carnivore")
+            filter(TG_latest == "carnivore")
         
         #Cyclopoids
         aphia_cyclopoids <- traits %>% 
           filter(order == "Cyclopoida")
           
           aphia_cyclopoid_omni <- aphia_cyclopoids %>% 
-            filter(FG_complete == "omnivore")
+            filter(TG_latest == "omnivore")
           
           aphia_cyclopoid_carni <- aphia_cyclopoids %>% 
-            filter(FG_complete == "carnivore")
+            filter(TG_latest == "carnivore")
         
         #Other Copepods
         aphia_otherCopepods <- traits %>%
@@ -340,10 +643,10 @@
           filter(order != "Calanoida" & order != "Cyclopoida")
 
           aphia_otherCopepods_omni <- aphia_otherCopepods %>%
-            filter(FG_complete == "omnivore")
+            filter(TG_latest == "omnivore")
 
           aphia_otherCopepods_carni <- aphia_otherCopepods %>%
-            filter(FG_complete == "carnivore")
+            filter(TG_latest == "carnivore")
         
       #03 compute for the total abundance for each trophic group using the prior aphiaID subsets
       for(i in 1:length(abundance_list)){
@@ -423,7 +726,7 @@
           
           # print(paste("output/data/sums/df_sums_",survey[i],"_",date, sep=""))
           # write_csv(trait_sums, paste("output/data/sums/df_sums_",survey[i],"_",date, sep=""))
-          print(paste("Saved file: ",survey,"/df_sums_",date,".csv", sep=""))
+          print(paste("Saved file: df/",survey,"/df_sums_",date,".csv", sep=""))
           write_csv(trait_sums, paste("output/df/",survey,"/df_sums_",date,".csv", sep=""))
       }
     }
@@ -462,7 +765,7 @@
       #03 tow_days
       df <- df %>% 
         group_by(tow_no) %>% 
-        mutate(tow_days = as.double(difftime(sampleTime_utc, min(sampleTime_utc), units = "days"))) %>% 
+        mutate(tow_days = as.double(difftime(sampleTime_UTC, min(sampleTime_UTC), units = "days"))) %>% 
         ungroup()
       
       #04 Longhurst
@@ -538,7 +841,7 @@
         df <- read_rds(df_prev)
         
         #remove previous traits
-        df <- df %>% select(c(sample_id, longitude, latitude, sampleTime_utc, tow_no, tow_days, longhurst, chla))
+        df <- df %>% select(c(sample_id, longitude, latitude, sampleTime_UTC, tow_no, tow_days, longhurst, chla))
         
         #load updated traits
         traits_file <- paste("output/data/",survey,"/df_sums_",date,".csv", sep="")
@@ -611,7 +914,7 @@
         print(paste0("Reading dataframe of: ",survey_list[i]))
         assign(paste(survey_list[i]), read_rds(paste("output/df/",survey_list[i],"/df_complete_",date_newVersion,".rds",sep="")) %>%  
                  mutate(survey = survey_list[i]) %>%  
-                 select(c("survey","sample_id", "latitude", "longitude", "sampleTime_utc", "tow_no", "tow_days", "longhurst", "chla", "zoopTotal_sum","FF_sum","Omni_sum","Carni_sum","Cope_omni_sum","Cope_carni_sum", "Cal_omni_sum", "Cal_carni_sum","Cyc_omni_sum","Cyc_carni_sum")))
+                 select(c("survey","sample_id", "latitude", "longitude", "sampleTime_UTC", "tow_no", "tow_days", "longhurst", "chla", "zoopTotal_sum","FF_sum","Omni_sum","Carni_sum","Cope_omni_sum","Cope_carni_sum", "Cal_omni_sum", "Cal_carni_sum","Cyc_omni_sum","Cyc_carni_sum")))
       }
       
       df <- auscpr %>% 
@@ -666,7 +969,8 @@
       
       #finalize df for filter-feeders
       
-      LH_modification <- c("ARCT", "BENG", "CNRY", "EAFR", "GFST", "GUIN", "MEDI", "NADR", "NASE", "NASW", "NATR", "NECS", "NPPF", "NWCS", "SARC")
+      #LH_modification <- c("ARCT", "BENG", "CNRY", "EAFR", "GFST", "GUIN", "MEDI", "NADR", "NASE", "NASW", "NATR", "NECS", "NPPF", "NWCS", "SARC")
+      LH_modification <- c("ARCH","NATR","NPPF")
       df_modified <- df %>% filter(!(df$longhurst %in% LH_modification))
       
       print(paste0(c("Modification of dataframe for filter-feeders is the removal of the following Longhurst Provinces: ", LH_modification), collapse = " "))
@@ -676,68 +980,184 @@
       
     }
     
-# 4_model_globalCPR :
+########################################### 4_model_globalCPR ##############################################################
     
-    #4.1 to generate a summary of proportion contributed by fixed and random effects to the total variance of the model
+    #4.1 to summarize the estimated proportions of zooplankton trophic groups with Chl-a as a predictor
+    
+    summary_predictionsChla <- function(){
+      tibble_models_zib <- tibble(
+        mdl = c("Omni_mdl_zib", "Carni_mdl_zib", "Filter_mdl_zib"),
+        Chla_Estimate = c(Omni_mdl_zib_coeff$Estimate[2], Carni_mdl_zib_coeff$Estimate[2], Filter_mdl_zib_coeff$Estimate[2]),
+        Chla_StdError = c(Omni_mdl_zib_coeff$`Std. Error`[2],  Carni_mdl_zib_coeff$`Std. Error`[2], Filter_mdl_zib_coeff$`Std. Error`[2]),
+        Chla_zvalue = c(Omni_mdl_zib_coeff$`z value`[2], Carni_mdl_zib_coeff$`z value`[2], Filter_mdl_zib_coeff$`z value`[2]),
+        Chla_pvalue = c(Omni_mdl_zib_coeff$`Pr(>|z|)`[2], Carni_mdl_zib_coeff$`Pr(>|z|)`[2], Filter_mdl_zib_coeff$`Pr(>|z|)`[2]),
+        PseudoR2_marginal = c(Omni_mdl_zib_R2[1], Carni_mdl_zib_R2[1], Filter_mdl_zib_R2[1]),
+        PseudoR2_conditional = c(Omni_mdl_zib_R2[2], Carni_mdl_zib_R2[2], Filter_mdl_zib_R2[2]))
+      
+      assign("summary_ChlaEstimates", tibble_models_zib, envir = .GlobalEnv)
+      print("Saved in Global Env: summary_ChlaEstimates")
+    }
+    
+    #4.2 to summarize the proportion contributed by fixed and random effects to the total variance of the model
     summary_mdlVariance <- function(mdls){
-      tibble_variance_summary <- tibble(mdl = c("Filter_mdl_zib", "Omni_mdl_zib", "Carni_mdl_zib"),
-                                        FixedEffect_proportion = c(1,2,3),
-                                        RandomEffect_proportion = c(1,2,3),
-                                        TowWithinSurvey_proportion = c(1,2,3),
-                                        LonghurstProvinces_proportion = c(1,2,3))  
+      tibble_variance_summary <- tibble(Trophic_Group = character(length = 3),
+                                        TotalVariance = numeric(length = 3),
+                                        FixedEffect_proportion = numeric(length = 3),
+                                        RandomEffect_proportion = numeric(length = 3),
+                                        TowWithinSurvey_proportion = numeric(length = 3),
+                                        LonghurstProvinces_proportion = numeric(length = 3))  
       
       for(i in 1:length(mdls)){
         mdl_summary <- summary(mdls[[i]])
         TG <- names(mdls[i])
+        tibble_variance_summary$Trophic_Group[i] <- TG
+        
+        print(paste0("Model: ",TG))
         if(TG == "Carni"){
-          if(exists("Carni_mdl_zib_R2") == FALSE){
-            mdl_Rsquare <- MuMIn::r.squaredGLMM(mdls[[i]])
-            print("missing")
-          }else{ mdl_Rsquare <- Carni_mdl_zib_R2}
-          
+            if(exists("Carni_mdl_zib_R2") == TRUE){
+              mdl_Rsquare <- Carni_mdl_zib_R2
+            }else{ mdl_Rsquare <- MuMIn::r.squaredGLMM(mdls[[i]])
+                   print("Determining R^2 for Carnivore GLM") }
         }else if(TG == "Omni"){
-          if(exists("Omni_mdl_zib_R2") == FALSE){
-            mdl_Rsquare <- MuMIn::r.squaredGLMM(mdls[[i]])
-            print("missing")
-          }else{ mdl_Rsquare <- Omni_mdl_zib_R2}
-          
+            if(exists("Omni_mdl_zib_R2") == TRUE){
+              mdl_Rsquare <- Omni_mdl_zib_R2
+            }else{ mdl_Rsquare <- MuMIn::r.squaredGLMM(mdls[[i]])
+                   print("Determining R^2 for Omnivore GLM") }
         }else if(TG == "Filter"){
-          if(exists("Filter_mdl_zib_R2") == FALSE){
-            mdl_Rsquare <- MuMIn::r.squaredGLMM(mdls[[i]])
-            print("missing")
-          }else{ mdl_Rsquare <- Filter_mdl_zib_R2}
+            if(exists("Filter_mdl_zib_R2") == TRUE){
+              mdl_Rsquare <- Filter_mdl_zib_R2
+            }else{ mdl_Rsquare <- MuMIn::r.squaredGLMM(mdls[[i]])
+                   print("Determining R^2 for Filter-feeder GLM") }
           
         }else(stop ("Error in determining R^2: misidentified trophic group"))
         
         #(proportion of variation) overall contribution of fixed effects to mdl variance
         var_FE <- mdl_Rsquare[1]
+        tibble_variance_summary$FixedEffect_proportion[i] <- var_FE
         #(proportion of variation) overall contribution of REs to mdl variance
         var_RE <- mdl_Rsquare[2] - mdl_Rsquare[1]
+        tibble_variance_summary$RandomEffect_proportion[i] <- var_RE
         #Conditional R2
         var_total <- mdl_Rsquare[2]
+        tibble_variance_summary$TotalVariance[i] <- var_total
         
         #get variance
-        #Tow within Survey
-        var_survey <- mdl_summary$varcor$cond$`survey:tow_no`[1] #gets the variance 
-        #Longhurst Provinces
-        var_lh <- mdl_summary$varcor$cond$`longhurst`[1]      
+          #Tow within Survey
+            var_surveyTowNo <- mdl_summary$varcor$cond$`survey:tow_no`[1] 
+            var_towDays <- mdl_summary$varcor$cond$`survey:tow_no`[4] 
+          #Longhurst Provinces
+            var_lh <- mdl_summary$varcor$cond$longhurst[1]      
         
         #contribution of each RE in relative terms
         #Tow within Survey
-        rel_var_survey <- (var_survey)/(var_survey + var_lh) * var_RE
-        #Longhurst Provinces
-        rel_var_LH <- (var_lh)/(var_survey + var_lh) * var_RE
-        
-        tibble_variance_summary$FixedEffect_proportion[i] <- var_FE
-        tibble_variance_summary$RandomEffect_proportion[i] <- var_RE
+        rel_var_survey <- (var_surveyTowNo + var_towDays)/(var_surveyTowNo + var_towDays + var_lh) * var_RE
         tibble_variance_summary$TowWithinSurvey_proportion[i] <- rel_var_survey
-        tibble_variance_summary$FixedEffect_proportion[i] <- rel_var_LH
+        #Longhurst Provinces
+        rel_var_LH <- (var_lh)/(var_surveyTowNo + var_towDays + var_lh) * var_RE
+        tibble_variance_summary$LonghurstProvinces_proportion[i] <- rel_var_LH
       }        
-      view(tibble_variance_summary)
+      #view(tibble_variance_summary)
+      assign("summary_variance", tibble_variance_summary, envir = .GlobalEnv)
+      print("Saved in Global Env: summary_variance")
     } 
     
+    #4.3 to summarize the change in proportion of zooplankton trophic groups per unit of Chl-a decline
     
-# 5_assess_models : 
+    summary_Delta_Per_Unit_Chla_Decline <- function(mdls){
+      max_Chla <- max(df$chla, na.rm = T)
+      min_Chla <- min(df$chla, na.rm = T)
+      range_Chla <- max_Chla - min_Chla
+      
+      tibble_deltaSummary <- tibble(TrophicGroup = character(length = 3), 
+                                    delta_per_Unit_Chla_Decline = numeric(length = 3),
+                                    proportion_TG_highestChla = numeric(length = 3),
+                                    proportion_TG_lowestChla = numeric(length = 3),
+                                    range_TG = numeric(length = 3))
+      for(i in 1:length(mdls)){
+        tibble_deltaSummary$TrophicGroup[i] <- names(mdls[i])
+        
+        if(names(mdls[i]) == "Omni"){
+          df_noNA <- df %>% filter(!is.na(chla_sqrt)) %>% filter(!is.na(ROC_SVT_zib)) %>% filter(!is.na(tow_days))
+        }else if(names(mdls[i]) == "Carni"){
+          df_noNA <- df %>% filter(!is.na(chla_sqrt)) %>% filter(!is.na(RCO_SVT_zib)) %>% filter(!is.na(tow_days))
+        }else if(names(mdls[i]) == "Filter"){
+          df_noNA <- df %>% filter(!is.na(chla_sqrt)) %>% filter(!is.na(RFF_SVT_zib)) %>% filter(!is.na(tow_days))
+        }else{ stop("Error in reading dataframe") } 
+        
+        #determine model estimate for min and max observed Chl-a
+        pop_preds_chla <- predictions(mdls[[i]], 
+                           newdata = datagrid(chla_sqrt = c(min_Chla, max_Chla)), 
+                           re.form = NA) # Zeros out random effects
+        
+        tibble_deltaSummary$proportion_TG_lowestChla[i] <- pop_preds_chla$estimate[1]
+        tibble_deltaSummary$proportion_TG_highestChla[i] <- pop_preds_chla$estimate[2]
+      }
+      #to compute for the range of proportion of zooplankton trophic group
+      tibble_deltaSummary <- tibble_deltaSummary %>% 
+        mutate(range_TG = abs(proportion_TG_highestChla - proportion_TG_lowestChla) * 100) %>% 
+        mutate(delta_per_Unit_Chla_Decline = (range_TG/range_Chla))
+      
+      print(paste0("Max Chla: ", max_Chla))
+      print(paste0("Min Chla: ", min_Chla))
+      print(paste0("Range Chla: ", range_Chla))
+      
+      #view(tibble_deltaSummary)
+      assign("summary_delta", tibble_deltaSummary, envir = .GlobalEnv)
+      print("Saved in Global Env: summary_delta")
+    } 
+    
+    #4.4 to summarize the difference in estimates across CPR surveys
+    
+    summary_predictionsPerSurvey <- function(mdls){
+      tibble_surveySummary <- tibble(TrophicGroup = character(length = 3),
+                                    auscpr = numeric(length = 3),
+                                    natlantic = numeric(length = 3),
+                                    npacific = numeric(length = 3),
+                                    socpr = numeric(length = 3),
+                                    auscprVSnatlantic = numeric(length = 3),
+                                    auscprVSnatlantic_pvalue = numeric(length = 3),
+                                    auscprVSnpacific = numeric(length = 3),
+                                    auscprVSnpacific_pvalue = numeric(length = 3),
+                                    auscprVSsocpr = numeric(length = 3),
+                                    auscprVSsocpr_pvalue = numeric(length = 3))
+
+      for(i in 1:length(mdls)){
+        tibble_surveySummary$TrophicGroup[i] <- names(mdls[i])
+
+        if(names(mdls[i]) == "Omni"){
+          df_noNA <- df %>% filter(!is.na(chla_sqrt)) %>% filter(!is.na(ROC_SVT_zib)) %>% filter(!is.na(tow_days))
+          mdl_zib_coeff <- summary(Omni_mdl_zib)$coefficients$cond %>% as.data.frame()
+        }else if(names(mdls[i]) == "Carni"){
+          df_noNA <- df %>% filter(!is.na(chla_sqrt)) %>% filter(!is.na(RCO_SVT_zib)) %>% filter(!is.na(tow_days))
+          mdl_zib_coeff <- summary(Carni_mdl_zib)$coefficients$cond %>% as.data.frame()
+        }else if(names(mdls[i]) == "Filter"){
+          df_noNA <- df %>% filter(!is.na(chla_sqrt)) %>% filter(!is.na(RFF_SVT_zib)) %>% filter(!is.na(tow_days))
+          mdl_zib_coeff <- summary(Filter_mdl_zib)$coefficients$cond %>% as.data.frame()
+        }else{ stop("Error in reading dataframe") }
+
+        pop_preds_surveys <- predictions(mdls[[i]],
+                            newdata = datagrid(survey = unique(df_noNA$survey)),
+                            re.form = NA) # Zeros out random effects
+
+        estimates_surveys <- pop_preds_surveys %>% select("survey", "estimate", "std.error", "statistic", "p.value")
+        
+        tibble_surveySummary$auscpr[i] <- estimates_surveys$estimate[estimates_surveys$survey == "auscpr"]
+        tibble_surveySummary$natlantic[i] <- estimates_surveys$estimate[estimates_surveys$survey == "natlantic"]
+        tibble_surveySummary$npacific[i] <- estimates_surveys$estimate[estimates_surveys$survey == "npacific"]
+        tibble_surveySummary$socpr[i] <- estimates_surveys$estimate[estimates_surveys$survey == "socpr"]
+        tibble_surveySummary$auscprVSnatlantic[i] <- ((estimates_surveys$estimate[estimates_surveys$survey == "auscpr"] - estimates_surveys$estimate[estimates_surveys$survey == "natlantic"])/estimates_surveys$estimate[estimates_surveys$survey == "auscpr"])
+        tibble_surveySummary$auscprVSnatlantic_pvalue[i] <- mdl_zib_coeff$`Pr(>|z|)`[3]
+        tibble_surveySummary$auscprVSnpacific[i] <- ((estimates_surveys$estimate[estimates_surveys$survey == "auscpr"] - estimates_surveys$estimate[estimates_surveys$survey == "npacific"])/estimates_surveys$estimate[estimates_surveys$survey == "auscpr"])
+        tibble_surveySummary$auscprVSnpacific_pvalue[i] <- mdl_zib_coeff$`Pr(>|z|)`[4]
+        tibble_surveySummary$auscprVSsocpr[i] <- ((estimates_surveys$estimate[estimates_surveys$survey == "auscpr"] - estimates_surveys$estimate[estimates_surveys$survey == "socpr"])/estimates_surveys$estimate[estimates_surveys$survey == "auscpr"])
+        tibble_surveySummary$auscprVSsocpr_pvalue[i] <- mdl_zib_coeff$`Pr(>|z|)`[5]
+      }
+      #view(tibble_surveySummary)
+      assign("summary_SurveyEstimates", tibble_surveySummary, envir = .GlobalEnv)
+      print("Saved in Global Env: summary_SurveyEstimates")
+    }
+    
+########################################### 5_assess_models ########################################################################### 
   
   # Create a publication-ready theme (Adapted from 2025 UQ MME Lab Winter R Workshop)
   pub_theme <- theme_classic(base_size = 10, base_family = "sans") + # Family including Arial, Helvetica, Futura, Verdana, and Calibri
@@ -811,7 +1231,7 @@
   plot_meanVariance <- function(mdl_list){
     date_newVersion <- date
     df <- read_rds(paste0("data_input/global_df_complete_",date_newVersion,".rds"))
-    df_filter <- read_rds(paste0("data_input/global_df_complete_Filter_",date_newVersion,".rds"))
+    #df_filter <- read_rds(paste0("data_input/global_df_complete_Filter_",date_newVersion,".rds"))
     
     for(i in 1:length(mdl_list)){
       TG <- names(mdl_list[i])  
@@ -834,7 +1254,7 @@
           labs(fill = "Frequency") + ylab("Residual") + xlab("Fitted Value")
         
       }else if(TG == "Filter"){
-        df_FF_noNA <- df_filter %>% filter(!is.na(chla_sqrt)) %>% filter(!is.na(RFF_SVT_zib)) %>% filter(!is.na(tow_days))
+        df_FF_noNA <- df %>% filter(!is.na(chla_sqrt)) %>% filter(!is.na(RFF_SVT_zib)) %>% filter(!is.na(tow_days))
         Filter_meanVariance <- ggplot(df_FF_noNA) + aes(fitted(Filter_mdl_zib), resid(Filter_mdl_zib, type = "pearson")) +
           geom_hex(bins = 80) + geom_smooth(method = "loess") + pub_theme + theme(legend.position = c(.9, .8)) +
           scale_fill_viridis(begin = 0, end = .9, option = "C", limit = range(c(1,1200))) +
@@ -877,7 +1297,7 @@
                                     plot.margin = margin(10,10,10,10)))
     
     ggsave(paste("output/plots/meanVariance_",date,".png",sep=""), plot = meanVariance_patch,
-           width = 10, height = 3, dpi = 300)
+           width = 5, height = 10, dpi = 300)
     print(paste0("Plot saved: meanVariance_",date,".png"))
   }
   
@@ -967,7 +1387,7 @@
   plot_residuals <- function(model_list){
     date_newVersion <- date
     df <- read_rds(paste0("data_input/global_df_complete_",date_newVersion,".rds"))
-    df_filter <- read_rds(paste0("data_input/global_df_complete_Filter_",date_newVersion,".rds"))
+    #df_filter <- read_rds(paste0("data_input/global_df_complete_Filter_",date_newVersion,".rds"))
     
     for(i in 1:length(model_list)){
       vc <- VarCorr(model_list[[i]])
@@ -975,7 +1395,7 @@
       print(TG) 
       
       if(TG == "Filter"){
-        df_noNA <- df_filter %>% filter(!is.na(chla_sqrt)) %>% filter(!is.na(RFF_SVT_zib)) %>% filter(!is.na(tow_days))
+        df_noNA <- df %>% filter(!is.na(chla_sqrt)) %>% filter(!is.na(RFF_SVT_zib)) %>% filter(!is.na(tow_days))
       }else if(TG == "Carni"){ 
         df_noNA <- df %>% filter(!is.na(chla_sqrt)) %>% filter(!is.na(RCO_SVT_zib)) %>% filter(!is.na(tow_days))
       }else if(TG == "Omni"){ 
@@ -1072,8 +1492,8 @@
     }
   }
 
-# 6b_predict_globalCPR : 
-
+########################################### 6b_predict_globalCPR ############################################## 
+  
   #6.1 to predict zooplankton trophic group
   
   predict_zoop_delta <- function(ensemble, mdls){
@@ -1115,6 +1535,7 @@
         #1.8 Save predictions in an R data output 
         saveRDS(esm_pred_merged, file=paste("Output/projections/",TG,"_",ssp_scenario,"_",esm_level,"_",date,".RData",sep=""))
         print(paste("Output saved: projections/",TG,"_",ssp_scenario,"_",esm_level,"_",date,".RData",sep=""))
+        
       }
     }
   }
@@ -1221,7 +1642,8 @@
     
   }
 
-# 7_plot_modelsummary : to plot visual summary of glmmTMB model
+########################################### 7_plot_modelsummary #############################################################
+  #to plot visual summary (fixed + random effects) of glmmTMB model
 
     plot_model_summary_omnivores <- function(date){
       
@@ -1234,7 +1656,7 @@
       #02 plot model predictions by (A) chl-a and (B) CPR Survey
       #Omnivores proportion vs. Chl-a
       pop_preds_omni_chla <- predictions(Omni_mdl_zib, 
-                                         newdata = datagrid(chla_sqrt = seq(floor(min(df_noNA$chla_sqrt)),ceiling(max(df_noNA$chla_sqrt)),0.5)), 
+                                         newdata = datagrid(chla_sqrt = seq(floor(min(df_noNA$chla_sqrt)),ceiling(max(df_noNA$chla_sqrt)),0.05)), 
                                          re.form = NA) # Zeros out random effects
       
       omni_plot_chla <- ggplot(data = pop_preds_omni_chla) + pub_theme +
@@ -1249,7 +1671,7 @@
       #Omnivores proportion vs. Surveys
       pop_preds_omni_surveys <- predictions(Omni_mdl_zib, 
                                             newdata = datagrid(survey = unique(df_noNA$survey), 
-                                                               chla_sqrt = seq(floor(min(df_noNA$chla_sqrt)),ceiling(max(df_noNA$chla_sqrt)),0.5)), 
+                                                               chla_sqrt = seq(floor(min(df_noNA$chla_sqrt)),ceiling(max(df_noNA$chla_sqrt)),0.05)), 
                                             re.form = NA) # Zeros out random effects
       
       omni_plot_surveys <- ggplot(data = pop_preds_omni_surveys) + pub_theme +
@@ -1292,7 +1714,7 @@
                           ymax=Intercepts+sd.interc),
                       width = 0,color="black") +
         geom_point(color = "black", size = 2) +
-        guides(size=FALSE,shape=FALSE) + 
+        guides(size="none",shape="none") + 
         theme(axis.text.x=element_text(size=10), 
               axis.title.x=element_text(size=13),
               panel.grid.minor.x = element_blank(),
@@ -1419,7 +1841,7 @@
                           ymax=Intercepts+sd.interc),
                       width = 0,color="black") +
         geom_point(color = "black", size = 2) +
-        guides(size=FALSE,shape=FALSE) + 
+        guides(size="none",shape="none") + 
         theme(axis.text.x=element_text(size=10), 
               axis.title.x=element_text(size=13),
               panel.grid.minor.x = element_blank(),
@@ -1480,7 +1902,7 @@
       # #01 read in model
       # load("output/previousModels/revision/fMdl_filterfeeder.RData") 
       # df_filter <- read_csv(paste0("data_input/global_df_complete_Filter_",date,".rds"))
-      df_noNA <- df_filter %>% filter(!is.na(chla_sqrt)) %>% filter(!is.na(RFF_SVT_zib)) %>% filter(!is.na(tow_days))
+      df_noNA <- df %>% filter(!is.na(chla_sqrt)) %>% filter(!is.na(RFF_SVT_zib)) %>% filter(!is.na(tow_days))
 
       #FIGURE 5
       print("Visual summary of glm for gelatinous filter-feeders in preparation")
@@ -1549,7 +1971,7 @@
                           ymax=Intercepts+sd.interc),
                       width = 0,color="black") +
         geom_point(color = "black", size = 2) +
-        guides(size=FALSE,shape=FALSE) + 
+        guides(size="none",shape="none") + 
         theme(axis.text.x=element_text(size=10), 
               axis.title.x=element_text(size=13),
               panel.grid.minor.x = element_blank(),
